@@ -90,6 +90,11 @@ python scripts\rocm\verify_capabilities.py
 上游若合并了对应改动，本仓库可以用 `scripts/rocm/apply_rocm_port.py` 重新对齐
 （它会跳过已经存在的改动，锚点消失的条目报 `GONE` 而不是失败）。
 
+> ⚠️ `pyproject.toml` 里的节点名仍然是上游的 `yue2-t8`（ComfyUI 节点包名，必须保持一致才能
+> 被 ComfyUI 正确加载）。**本仓库不发布、也不应发布到 ComfyUI Registry** ——
+> 那里对应的是上游项目。上游的 `.github/workflows/publish.yml` 已从本仓库移除，
+> 正是为了避免误发布。
+
 ---
 
 ## 已知限制
