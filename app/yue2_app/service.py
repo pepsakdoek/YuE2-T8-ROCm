@@ -35,10 +35,38 @@ from .io import atomic_json, public_job, within
 from .retention import RetentionManager
 from .settings import model_directory, save_model_directory, settings_info
 from . import assistant_data
+from . import i18n
 from . import updater
 
 CREDENTIALS = assistant_data.Credentials()
 ASSISTANT_KINDS = {"assistant"}
+
+# Payload fields whose values are server-authored prose shown to the user. The
+# browser localises the rest of the UI from its own dictionaries; these are the
+# strings only the server can produce. Job summaries are deliberately excluded:
+# they already carry summary_key for the browser to render, and translating them
+# here as well would create a second source of truth.
+LOCALISED_FIELDS = ("error", "message")
+# Fields holding a list of prose lines, e.g. RVC preflight and material warnings.
+LOCALISED_LISTS = ("errors", "warnings", "issues")
+
+
+def localize_payload(value, locale: str):
+    """Walk a response payload, translating server prose in known fields."""
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if key in LOCALISED_FIELDS and isinstance(item, str):
+                result[key] = i18n.translate(item, locale)
+            elif key in LOCALISED_LISTS and isinstance(item, list):
+                result[key] = [i18n.translate(entry, locale) if isinstance(entry, str)
+                               else localize_payload(entry, locale) for entry in item]
+            else:
+                result[key] = localize_payload(item, locale)
+        return result
+    if isinstance(value, list):
+        return [localize_payload(item, locale) for item in value]
+    return value
 
 TERMINAL = {"complete", "failed", "cancelled"}
 CORE_KINDS = {"generate", "plan", "render_plan", "semantic", "synthesize", "decode", "doctor"}
@@ -229,28 +257,52 @@ class JobStore:
             self.jobs[job["id"]] = status
 
     @staticmethod
-    def _summary(kind: str, request: dict) -> str:
+    def _summary_spec(kind: str, request: dict) -> dict:
+        """Locale-neutral job summary: a display string plus an optional key.
+
+        The string is produced once, when the job is queued, and stored. That
+        freezes whatever language was active at submission time, so every case
+        that is not user data also reports a key (and params) that the browser
+        translates at render time. "key" is None for user-supplied text, which
+        must never be translated.
+        """
         if kind in ASSISTANT_KINDS:
-            return "测试 LLM 连接" if request.get("test_connection") else str(request.get("values", {}).get("music_idea", "AI 创作助手"))[:160]
+            if request.get("test_connection"):
+                return {"key": "summary.assistant.testConnection", "text": "测试 LLM 连接"}
+            values = request.get("values", {})
+            # Preserve the original contract: a missing music_idea falls back to
+            # the label, an explicitly present one is used as-is (even if empty).
+            return {"key": None if "music_idea" in values else "summary.assistant.default",
+                    "text": str(values.get("music_idea", "AI 创作助手"))[:160]}
         if kind == "doctor":
-            return "检查 GPU、运行库与模型文件"
+            return {"key": "summary.doctor", "text": "检查 GPU、运行库与模型文件"}
         if kind == "transcribe":
             name = Path(str(request.get("source_path", ""))).name
-            return f"转谱 {name}" if name else "从音频提取旋律与乐谱"
+            if name:
+                return {"key": "summary.transcribe.named", "params": {"name": name}, "text": f"转谱 {name}"}
+            return {"key": "summary.transcribe.default", "text": "从音频提取旋律与乐谱"}
         if kind in {"voice_convert", "reference_cover"}:
             name = Path(str(request.get("reference_path", ""))).name
-            return f"参考音色翻唱 · {name}" if name else "参考音色翻唱"
+            if name:
+                return {"key": "summary.voiceCover.named", "params": {"name": name}, "text": f"参考音色翻唱 · {name}"}
+            return {"key": "summary.voiceCover.default", "text": "参考音色翻唱"}
         if kind == "render_plan":
-            return "从已确认的 ABC 乐谱生成歌曲"
+            return {"key": "summary.renderPlan", "text": "从已确认的 ABC 乐谱生成歌曲"}
         style = " ".join(str(request.get("style", "")).split())
         if style:
-            return style[:72] + ("…" if len(style) > 72 else "")
-        return {
-            "plan": "创作旋律与和弦乐谱",
-            "semantic": "生成音乐结构",
-            "synthesize": "合成人声与伴奏",
-            "decode": "输出 48 kHz 音频",
-        }.get(kind, "本地音乐任务")
+            # The user's own style prompt: user data, never translated.
+            return {"key": None, "text": style[:72] + ("…" if len(style) > 72 else "")}
+        key, text = {
+            "plan": ("summary.stage.plan", "创作旋律与和弦乐谱"),
+            "semantic": ("summary.stage.semantic", "生成音乐结构"),
+            "synthesize": ("summary.stage.synthesize", "合成人声与伴奏"),
+            "decode": ("summary.stage.decode", "输出 48 kHz 音频"),
+        }.get(kind, ("summary.default", "本地音乐任务"))
+        return {"key": key, "text": text}
+
+    @classmethod
+    def _summary(cls, kind: str, request: dict) -> str:
+        return cls._summary_spec(kind, request)["text"]
 
     def assert_writable(self) -> None:
         if self.updating or updater.update_status(ROOT).get('state') in updater.ACTIVE_STATES:
@@ -406,9 +458,15 @@ class JobStore:
             now = time.time()
             job = {"id": job_id, "kind": kind, "request": request, "created_at": now,
                    "source": source, "client_request_id": client_request_id, "result_panel": result_panel}
+            summary = self._summary_spec(kind, request)
             status = {"id": job_id, "kind": kind, "status": "queued", "stage": "queued",
                       "created_at": now, "updated_at": now, "job_dir": str(directory),
-                      "source": source, "summary": self._summary(kind, request), "result_panel": result_panel}
+                      "source": source, "summary": summary["text"],
+                      # Locale-neutral form so the browser can re-render the
+                      # summary in the selected language long after it was queued.
+                      "summary_key": summary.get("key"),
+                      "summary_params": summary.get("params") or {},
+                      "result_panel": result_panel}
             atomic_json(directory / "job.json", job)
             atomic_json(directory / "status.json", status)
             with self.lock:
@@ -750,7 +808,13 @@ class Handler(BaseHTTPRequestHandler):
             with path.open("a", encoding="utf-8") as stream:
                 stream.write(line)
 
+    def _locale(self) -> str:
+        return i18n.resolve_locale(self.headers.get(i18n.HEADER))
+
     def _json(self, status: int, value: object):
+        # Single choke point for every response, so error and message prose is
+        # localised wherever it sits in the payload (including job lists).
+        value = localize_payload(value, self._locale())
         body = json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
