@@ -1,163 +1,183 @@
-# 给 t8 上游提 PR 的工作文档
+# Working document for upstreaming PRs to t8
 
-> 目标会话：**对接 GitHub 的会话**用本文档。
-> 上游仓库：https://github.com/T8mars/Comfyui-YuE2-T8
-> 本移植基于：**v1.2.2**（commit `a9cc3af081ddf8025f75c4993f128a4554dafe31`，2026-09-12）
-> 本地参考 checkout：`D:\DSHWEB\_yue_probe\t8\`
-
----
-
-## 0. 提 PR 前的三个判断（先做，别跳过）
-
-1. **先开 issue 沟通，不要直接甩 PR。** 理由：
-   - Patch 1/3/4/5 是 **bug 修复**（在 NVIDIA + torch 2.11 上同样成立，见 §2.1），
-     作者大概率愿意收；
-   - Patch 2 是**行为变化**（16GB 卡默认 VAE 分块从 1024 改 512），需要作者认可"按显存自适应"这个方向；
-   - ROCm 支持是否进上游，取决于作者是否愿意在 CI/文档里引入 AMD 分支 —— 这是维护成本问题。
-2. **拆分 PR**：建议 3 个独立 PR，不要合一个：
-   - PR-A「fix: torch 2.10+ 兼容」（Patch 1/3/4/5，纯 bug 修复，CUDA 用户也受益）
-   - PR-B「feat: device-aware VAE tile size」（Patch 2）
-   - PR-C「docs+scripts: AMD ROCm port guide」（新脚本 + 文档，不改上游代码）
-3. **PR-A 必须用 CUDA 论证**：这些 bug 在 NVIDIA 上装 torch 2.10/2.11 也复现
-   （是我们本地理论推断 + 代码事实，**没有 NVIDIA 机器实测**——发 issue 时要如实说明，
-   请维护者/社区帮忙确认，避免被当成"AMD 专属问题"而拒绝）。
+> Use this document in the **session that talks to GitHub**.
+> Upstream repository: https://github.com/T8mars/Comfyui-YuE2-T8
+> This port is based on: **v1.2.2** (commit `a9cc3af081ddf8025f75c4993f128a4554dafe31`, 2026-09-12)
+> Local reference checkout: `D:\DSHWEB\_yue_probe\t8\`
 
 ---
 
-## 1. PR-A：fix: torch 2.10+ compatibility (4 issues, all reproducible on NVIDIA too)
+## 0. Three things to settle before opening a PR (do these first, don't skip them)
 
-> 主题：t8 的 requirements 与 vendored 代码假设 torch 2.8；升级到 torch≥2.9 会踩 4 个问题。
-> 我们在 ROCm/torch 2.11 上全部实测命中。以下每个都给「现象 / 根因 / 修法」。
+1. **Open an issue and talk first; don't just drop a PR on them.** Reasons:
+   - Patches 1/3/4/5 are **bug fixes** (they hold on NVIDIA + torch 2.11 as well, see §2.1),
+     so the author will most likely want them;
+   - Patch 2 is a **behavior change** (the default VAE tile size on 16GB cards moves from 1024 to 512),
+     so the author needs to endorse the "adapt to available VRAM" direction;
+   - Whether ROCm support lands upstream depends on whether the author wants an AMD branch in CI/docs —
+     that is a maintenance-cost question.
+2. **Split the PRs**: three separate PRs are recommended instead of one combined PR:
+   - PR-A "fix: torch 2.10+ compatibility" (Patches 1/3/4/5; pure bug fixes that benefit CUDA users too)
+   - PR-B "feat: device-aware VAE tile size" (Patch 2)
+   - PR-C "docs+scripts: AMD ROCm port guide" (new scripts + docs, no upstream code changes)
+3. **PR-A must make the CUDA case**: these bugs also reproduce on NVIDIA with torch 2.10/2.11 installed
+   (this is our local reasoning plus code facts, **not measured on an NVIDIA machine** — say so honestly
+   when opening the issue and ask the maintainers/community to confirm, so it isn't dismissed as an
+   "AMD-only problem").
 
-### 1.1 `descript-audiotools` 在 import 时崩溃（阻断 Seed-VC 启动）
+---
+
+## 1. PR-A: fix: torch 2.10+ compatibility (4 issues, all reproducible on NVIDIA too)
+
+> Topic: t8's requirements and vendored code assume torch 2.8; upgrading to torch≥2.9 trips four problems.
+> We hit all of them in testing on ROCm/torch 2.11. Each one below is given as symptom / root cause / fix.
+
+### 1.1 `descript-audiotools` crashes on import (blocks Seed-VC startup)
 
 ```
 AttributeError: module 'torch.distributed' has no attribute 'ReduceOp'
   audiotools/ml/decorators.py:288  op: dist.ReduceOp = dist.ReduceOp.AVG
 ```
-- **根因**：demucs → dac → descript-audiotools 在 `Tracker` 类体里对 `dist.ReduceOp`
-  求值；torch≥2.9 把 `torch.distributed` 改成惰性模块，未初始化进程组前不暴露 `ReduceOp`。
-- **影响**：`voice_convert` / `reference_cover` 完全无法启动。
-- **修法**：import 时若 `dist` 无 `ReduceOp`，注入哨兵（Seed-VC 从不初始化分布式）。
-- 文件：`app/yue2_app` 之外，实际在 **voice 运行时的 site-packages**（audiotools 是 demucs 的
-  传递依赖）→ 上游的正确修法可能是 **pin `descript-audiotools` 的一个兼容版本，或在
-  voice requirements 里加补丁说明**。这需要作者定夺，所以更要先开 issue。
+- **Root cause**: demucs → dac → descript-audiotools evaluates `dist.ReduceOp` inside the `Tracker` class
+  body; torch≥2.9 turned `torch.distributed` into a lazy module that does not expose `ReduceOp` until a
+  process group is initialized.
+- **Impact**: `voice_convert` / `reference_cover` cannot start at all.
+- **Fix**: inject a sentinel at import time when `dist` has no `ReduceOp` (Seed-VC never initializes
+  distributed).
+- Location: outside `app/yue2_app`, actually in the **voice runtime's site-packages** (audiotools is a
+  transitive dependency of demucs) → the correct upstream fix may be to **pin a compatible version of
+  `descript-audiotools`, or add a patch note to the voice requirements**. That is the author's call, which
+  is all the more reason to open an issue first.
 
-### 1.2 Seed-VC 的 CAMPPlus / RMVPE 在 MIOpen 上崩（fp32 batchnorm JIT）
+### 1.2 Seed-VC's CAMPPlus / RMVPE crash on MIOpen (fp32 batchnorm JIT)
 
 ```
 MIOpen(HIP): Error [Compile] MIOpenBatchNormFwdInferSpatial.cpp
   fatal error: 'type_traits' file not found   →  miopenStatusUnknownError
 ```
-- **根因**：MIOpen 对部分 fp32 kernel 需要 HIPRTC 运行时编译 C++；TheRock 的 wheel
-  不带 libc++ 头，comgr 编译失败。
-- **修法（我们采用的）**：CAMPPlus/RMVPE 转 fp16（`load_models()` 里其它模型本来就
-  `.half()`），fp16 走不同 kernel、无需 JIT。实测通过（RTF 0.79）。
-- **对 NVIDIA 用户的相关性**：若 TheRock 之外的 MIOpen 问题不存在，这条纯粹是 AMD 的；
-  但 `load_models()` 里模型精度不一致（CAMPPlus 独自 fp32）本身值得统一。
+- **Root cause**: for some fp32 kernels MIOpen needs to compile C++ at runtime through HIPRTC; TheRock's
+  wheels ship no libc++ headers, so the comgr compile fails.
+- **Fix (the one we adopted)**: convert CAMPPlus/RMVPE to fp16 (the other models in `load_models()` already
+  call `.half()` anyway); fp16 takes different kernels and needs no JIT. Verified in testing (RTF 0.79).
+- **Relevance to NVIDIA users**: if the MIOpen problem does not exist outside TheRock, this one is purely
+  AMD; but the inconsistent model precision inside `load_models()` (CAMPPlus alone in fp32) is worth
+  unifying regardless.
 
-### 1.3 `torchaudio 2.11` 的 `.save()` 需要 torchcodec
+### 1.3 `torchaudio 2.11`'s `.save()` requires torchcodec
 
 ```
 ImportError: TorchCodec is required for save_with_torchcodec
 ```
-- **根因**：torchaudio 2.11 把 `.save()` 改走 torchcodec；Windows wheel 不带 FFmpeg 共享库。
-- **修法（我们采用的）**：在 voice worker 内把 `torchaudio.save` 替换为 soundfile
-  （Seed-VC 只写 WAV，等价）。
-- **上游更优解**：requirements 加 `torchcodec` 并在文档写明 FFmpeg 共享库需求；
-  或作者把 Seed-VC 的保存改成 soundfile。
+- **Root cause**: torchaudio 2.11 routes `.save()` through torchcodec; the Windows wheel ships no FFmpeg
+  shared libraries.
+- **Fix (the one we adopted)**: replace `torchaudio.save` with soundfile inside the voice worker
+  (Seed-VC only ever writes WAV, so it is equivalent).
+- **Better upstream solution**: add `torchcodec` to the requirements and document the FFmpeg
+  shared-library requirement; or have the author switch Seed-VC's save path to soundfile.
 
-### 1.4 `cuda_graph.py` 对 torch 2.10+ 的假设
+### 1.4 `cuda_graph.py`'s assumptions for torch 2.10+
 
-- `vendor/yue2/cuda_graph.py` 的注释明确写 "Torch 2.10 is pinned by the package"，
-  并对 `torch.ops.aten._flash_attention_forward` 的 schema 做**字符串探测**来选后端。
-- **schema 是跨后端共享的**：任何"schema 里有 X 但该后端实现不支持 X"的组合都会误判
-  （我们就是在 ROCm 上命中：schema 有 `seqused_k`，ROCm 的 `mha_varlen_fwd` 拒绝它）。
-- **修法**：探测后**再实测一次**（try/except 或 capability 查询），而不是只信 schema。
-  这对 torch 升级后的 CUDA 用户同样有价值。
+- A comment in `vendor/yue2/cuda_graph.py` states outright "Torch 2.10 is pinned by the package", and the
+  backend is chosen by **string-probing** the schema of `torch.ops.aten._flash_attention_forward`.
+- **Schemas are shared across backends**: any combination where "the schema has X but that backend's
+  implementation does not support X" is misdetected (which is exactly what hit us on ROCm: the schema has
+  `seqused_k`, and ROCm's `mha_varlen_fwd` rejects it).
+- **Fix**: **actually try it once** after probing (try/except or a capability query) instead of trusting the
+  schema alone. This is just as valuable to CUDA users after a torch upgrade.
 
 ---
 
-## 2. PR-B：feat: device-aware VAE tile size
+## 2. PR-B: feat: device-aware VAE tile size
 
-> `app/yue2_app/core_worker.py` 的 `create_pipe()` 没有把 `vae_core_frames` 透传给
-> pipeline，而 pipeline 内部按 `memory_budget_gib` 单值推导（`512 if <=12 else 1024`），
-> 隐含 24GB 卡假设。
+> `create_pipe()` in `app/yue2_app/core_worker.py` does not pass `vae_core_frames` through to the
+> pipeline, and inside the pipeline it is derived from the single `memory_budget_gib` value
+> (`512 if <=12 else 1024`), which silently assumes a 24GB card.
 
-**实测收益（同一请求 `zh_song.json`，seed 20260917，产出 174.919 s 音频）**：
+**Measured gain (same request `zh_song.json`, seed 20260917, producing 174.919 s of audio)**:
 
-| | wall | VAE 解码 | `vae_core_frames` |
+| | wall | VAE decode | `vae_core_frames` |
 |---|---:|---:|---|
-| 改前 | 613.7 s | 313.0 s | 1024（由 `memory_budget_gib=23.5` 推导） |
-| 改后 | **393.4 s** | **107.0 s** | 512（按实卡 15.92 GiB 自适应） |
-| 收益 | **−220.3 s（−35.9%）** | −206 s | — |
+| Before | 613.7 s | 313.0 s | 1024 (derived from `memory_budget_gib=23.5`) |
+| After | **393.4 s** | **107.0 s** | 512 (adaptive to the card's 15.92 GiB) |
+| Gain | **−220.3 s (−35.9%)** | −206 s | — |
 
-折算：**3.51 s/音频秒 → 2.25 s/音频秒**。改后甚至快于官方 CLI 直跑同请求的 423.4 s。
+That works out to **3.51 s per audio second → 2.25 s per audio second**. After the change it is even faster
+than the 423.4 s of running the same request directly through the official CLI.
 
-**建议修法**：`create_pipe` 增加
+**Proposed fix**: add to `create_pipe`
 ```python
 vae_core_frames=int(request.get("vae_core_frames") or _default_vae_frames())
 ```
-其中 `_default_vae_frames()` 按实卡显存选（<20GiB → 512，否则维持上游 1024）。
-对 24GB NVIDIA 用户是零变化；对 16GB 用户是 36% 提速；API/前端可选择性透传。
+where `_default_vae_frames()` picks based on the card's actual VRAM (<20GiB → 512, otherwise keep
+upstream's 1024). That is a no-op for 24GB NVIDIA users, a 36% speedup for 16GB users, and the API/frontend
+can pass it through optionally.
 
-**顺带说明**：`memory_budget_gib` 本身不需要用户调 —— 它会被 pipeline 自动夹到
-`min(budget-2, total-2)`，16GB 卡上填 23.5 实际就是 13.92 GiB。真正影响速度的只有分块大小。
-
----
-
-## 3. PR-C：docs/scripts: AMD Radeon (ROCm) port guide
-
-- 新增 `scripts/rocm/*` 与 `docs/ROCM_PORT.md`（内容取自 `README_ROCM_PORT.md`）：
-  - 参数化运行时安装器（core/transcribe/voice），把 cu128 索引换成 AMD TheRock
-  - `apply_rocm_port.py` 幂等应用全部 patch
-  - 镜像直连的模型下载器（huggingface_hub 在部分网络不可用）
-- **不改动上游任何现有文件**（上游 setup.ps1 保持原样，ROCm 用户用新脚本并排安装）
-- 文档里写明：模型哈希与上游 pin 逐位一致；四项能力在 RX 9070 XT 上实测通过
-
-### 3.1 另外两条建议一并提（都属于 PR-B/C 的性质）
-
-1. **禁止应用内自更新覆盖手改环境**（我们的 Patch 6）。t8 的「更新到 vX」会整包重解压，
-   对任何本地改过 kit 的用户（不只是 AMD）都会静默冲掉改动。建议：
-   升级前检测 `runtime/` 与源码是否有本地修改，或至少在文档里明确警告。
-   我们在移植版里让它恒返回"已是最新"。
-2. **设备文案不该写死 NVIDIA**（我们的 Patch 7）。`index.html` 写
-   "所有推理都在你的 NVIDIA GPU 上完成"，三个 worker 的自检报错写
-   "未检测到 NVIDIA CUDA"。在 HIP 构建上这些文案是误导（用户会以为硬件不支持，
-   而实际上自检走 `torch.cuda` 别名、HIP 下本来就通过）。建议改成中性
-   （"本地 GPU" / "CUDA/HIP"）或按 `torch.version.hip` 动态显示。
-
-### 3.2 给维护者的工程提示（我们踩到的）
-
-- **补丁脚本要保留原文件换行符**：Python `Path.write_text()` 在 Windows 会把 `\n`
-  变 `\r\n`，一个 2 行修复会变成整文件 diff。我们的脚本统一用 `open(..., newline="")`。
-- **给 vendored 代码打补丁时注意多锚点**：同一文件可能有多处改动，幂等标记应选
-  "全部改动完成后才出现"的特征串，否则会漏打后续锚点（我们在 `inference.py` 上踩过）。
+**Side note**: users do not need to tune `memory_budget_gib` themselves — the pipeline automatically clamps
+it to `min(budget-2, total-2)`, so on a 16GB card entering 23.5 actually means 13.92 GiB. Only the tile size
+genuinely affects speed.
 
 ---
 
-## 4. 提交材料清单（GitHub 会话需要准备的）
+## 3. PR-C: docs/scripts: AMD Radeon (ROCm) port guide
 
-| 项 | 来源 | 状态 |
+- Adds `scripts/rocm/*` and `docs/ROCM_PORT.md` (content taken from `README_ROCM_PORT.md`):
+  - a parameterized runtime installer (core/transcribe/voice) that swaps the cu128 index for AMD TheRock
+  - `apply_rocm_port.py`, which applies every patch idempotently
+  - a direct-mirror model downloader (huggingface_hub is unusable on some networks)
+- **Changes no existing upstream file** (upstream setup.ps1 stays as it is; ROCm users install alongside with
+  the new scripts)
+- The documentation states that model hashes are bit-identical to upstream's pins, and that all four
+  capabilities passed on an RX 9070 XT
+
+### 3.1 Two more suggestions to send along (both are PR-B/C in nature)
+
+1. **Stop the in-app self-updater from overwriting hand-modified environments** (our Patch 6). t8's
+   "Update to vX" re-extracts the whole package, silently wiping local changes for anyone who has modified
+   their kit (not just AMD users). Suggestion: detect local modifications to `runtime/` and the source tree
+   before upgrading, or at minimum warn about it explicitly in the docs. In our port we made it always
+   report "already up to date".
+2. **Device copy should not hardcode NVIDIA** (our Patch 7). `index.html` says
+   "All inference runs on your NVIDIA GPU", and the self-check errors in the three workers say
+   "NVIDIA CUDA not detected". On HIP builds that copy is misleading (users conclude their hardware is
+   unsupported, when in fact the self-check goes through the `torch.cuda` alias and passes on HIP by
+   design). Suggest making it neutral ("local GPU" / "CUDA/HIP") or displaying it dynamically based on
+   `torch.version.hip`.
+
+### 3.2 Engineering notes for the maintainer (things we tripped over)
+
+- **Patch scripts must preserve the original file's line endings**: on Windows, Python's
+  `Path.write_text()` turns `\n` into `\r\n`, so a two-line fix becomes a whole-file diff. Our scripts
+  consistently use `open(..., newline="")`.
+- **Watch out for multiple anchors when patching vendored code**: a single file may need several changes,
+  so the idempotency marker should be a string that appears **only once every change is applied**;
+  otherwise later anchors get skipped (we hit this in `inference.py`).
+
+---
+
+## 4. Submission checklist (what the GitHub session needs to prepare)
+
+| Item | Source | Status |
 |---|---|---|
-| 移植报告（中文） | `D:\DSHWEB\_yue_probe\README_ROCM_PORT.md` | ✅ 已写 |
-| patch 应用脚本 | `D:\YuE2\T8\scripts\rocm\apply_rocm_port.py` | ✅ 已在 kit 内 |
-| 运行时安装器 | `D:\YuE2\T8\scripts\setup_rocm_runtime.ps1` | ✅ 已在 kit 内 |
-| 验证脚本 | `D:\YuE2\T8\scripts\rocm\verify_capabilities.py` | ✅ |
-| 性能/正确性数据 | `D:\YuE2\PROGRESS.md` §3 | ✅ |
-| **复测 Patch 2 的提速数据** | 已完成：613.7 s → **393.4 s**（−35.9%），见 §2 | ✅ |
-| **每个 patch 的最小 diff 文件**（.patch/.diff 格式） | 由 apply_rocm_port.py 的锚点生成 | ⬜ |
-| NVIDIA 复现佐证（1.1/1.3 两条） | 请社区/作者确认 | ⬜ |
+| Port report (Chinese) | `D:\DSHWEB\_yue_probe\README_ROCM_PORT.md` | ✅ Written |
+| Patch application script | `D:\YuE2\T8\scripts\rocm\apply_rocm_port.py` | ✅ Already in the kit |
+| Runtime installer | `D:\YuE2\T8\scripts\setup_rocm_runtime.ps1` | ✅ Already in the kit |
+| Verification script | `D:\YuE2\T8\scripts\rocm\verify_capabilities.py` | ✅ |
+| Performance/correctness data | `D:\YuE2\PROGRESS.md` §3 | ✅ |
+| **Re-measure Patch 2's speedup data** | Done: 613.7 s → **393.4 s** (−35.9%), see §2 | ✅ |
+| **Minimal diff file for each patch** (.patch/.diff format) | Generated from apply_rocm_port.py's anchors | ⬜ |
+| NVIDIA reproduction evidence (items 1.1/1.3) | Ask the community/author to confirm | ⬜ |
 
-> 注意：`D:\YuE2\T8` 是**已打补丁**的工作副本。给上游提 PR 时，diff 的 base 应是
-> 上游 v1.2.2（`a9cc3af…`），只包含上面列的 5 处源码改动 —— 不要把 `runtime/`、
-> `models/`、`outputs/`、`cache/`、`logs/` 等运行产物带进 diff。
+> Note: `D:\YuE2\T8` is an **already-patched** working copy. When opening a PR upstream, the diff base should
+> be upstream v1.2.2 (`a9cc3af…`), containing only the five source changes listed above — do not drag runtime
+> artifacts such as `runtime/`, `models/`, `outputs/`, `cache/`, or `logs/` into the diff.
 
 ---
 
-## 5. 语气与署名建议
+## 5. Tone and attribution suggestions
 
-- 开头致谢作者：t8 的架构（隔离 worker、vendored 依赖、SHA 清单校验）是这次移植
-  能低成本完成的关键 —— 三个运行时可以独立替换，模型完整性校验让"权重逐位一致"可证。
-- 明确标注非商用：YuE2 权重 CC BY-NC 4.0。
-- 附上机器信息（RX 9070 XT / gfx1201 / Windows 11 / ROCm 7.13 wheel）与我们实测的四项数据。
+- Open by thanking the author: t8's architecture (isolated workers, vendored dependencies, SHA manifest
+  verification) is what made this port cheap to build — the three runtimes can be swapped out independently,
+  and model integrity checks make "bit-identical weights" provable.
+- State the non-commercial restriction explicitly: YuE2 weights are CC BY-NC 4.0.
+- Include the machine details (RX 9070 XT / gfx1201 / Windows 11 / ROCm 7.13 wheel) and our four sets of
+  measured numbers.

@@ -1,121 +1,271 @@
 # YuE2-T8-ROCm
 
-**把 [T8mars/Comfyui-YuE2-T8](https://github.com/T8mars/Comfyui-YuE2-T8)（原版仅支持
-NVIDIA CUDA）完整移植到 AMD Radeon / Windows 原生 ROCm 的可用整合包。**
+**YuE2 music generation on AMD Radeon under native Windows ROCm — no CUDA, no Triton, no flash-attn.**
 
-实测环境：**AMD Radeon RX 9070 XT 16GB（gfx1201 / RDNA4）· Windows 11 build 26200 ·
-原生 Windows ROCm（无 CUDA、无 Triton、无 flash-attn）**
+This is a fork with two layers of change on top of the original project:
 
-四项能力**全部实测产出真实产物**（不是只看 capability 标志）：
+1. **[T8mars/Comfyui-YuE2-T8](https://github.com/T8mars/Comfyui-YuE2-T8)** (T8star-Aix) wraps the
+   original YuE2 model in a local WebUI and a ComfyUI node pack. Its installer is CUDA-only by
+   construction (`--index-url .../whl/cu128`), so it has no install path on an AMD card.
+2. **This repository** ports that bundle to AMD Radeon: an AMD TheRock ROCm runtime, four source
+   fixes that are device-agnostic rather than AMD-specific, RDNA2 (gfx1030) support, English docs and
+   filenames, and an English/Chinese toggle in the WebUI.
 
-| 能力 | 实测 | 耗时 |
-|---|---|---|
-| 出歌 | 175 s 中文歌 → `audio.flac` + `score.abc` | 393.4 s |
-| 音频转谱（SheetSage2 + MERT） | 24 s 音频 → ABC + MIDI | 36 s |
-| 乐谱渲染（playwright + abcjs） | **PDF 乐谱** + 钢琴试奏 WAV | 含上 |
-| 参考音色（Seed-VC + Demucs） | 换音色人声 + 伴奏重混 `audio.flac` | 47 s（RTF 0.79） |
+The underlying model and CLI are **[multimodal-art-projection/YuE](https://github.com/multimodal-art-projection/YuE)**
+(YuE2), whose stated target is Linux + NVIDIA + 24 GB VRAM.
 
-> **这个仓库不含任何模型权重。** `models/` 只有目录骨架 + 一份说明每个文件应有的大小与
-> sha256 的 README，权重由安装器下载。见 [`models/README.md`](models/README.md)。
+Verified on two machines:
+
+| Machine | GPU | Arch | Status |
+|---|---|---|---|
+| Author's | Radeon RX 9070 XT 16 GB | gfx1201 / RDNA4 | All four capabilities verified end-to-end |
+| Contributor's | Radeon RX 6800 16 GB | gfx1030 / RDNA2 | Song generation verified end-to-end (see [`docs/GFX1030_RX6800.md`](docs/GFX1030_RX6800.md)) |
 
 ---
 
-## 快速开始
+## Requirements
 
-前置：AMD 驱动 + Windows 11；磁盘约 45 GB；网络能访问 `hf-mirror.com` 与
-`rocm.nightlies.amd.com`。
+The gate is **not** VRAM — it is whether AMD publishes a Windows ROCm PyTorch wheel for your GPU
+family. Everything else is comparatively cheap.
+
+| Requirement | Value | Notes |
+|---|---|---|
+| GPU | Any family AMD ships Windows ROCm `torch` for | `gfx110X-all`, `gfx120X-all`, `gfx1151`, `gfx94X-dcgpu`, `gfx950-dcgpu`. **RDNA2 (gfx103X) is only published under the `v2-staging` index** — see below |
+| VRAM | **7.01 GiB resident floor** measured; 16 GB verified end-to-end | Upstream recommends 24 GB. The code enforces `min(memory_budget_gib − 2, total − 2)` |
+| OS + driver | Windows 10/11 x64 + current Adrenalin | Linux works too; it is upstream's own target |
+| Python | 3.12 (the installer builds an embedded 3.12.10) | Upstream declares `>=3.10` |
+| Disk | **17.7 GB** for runtime + generation models | ~45 GB if you also install the transcription, voice and render models |
+| Weights | YuE2-3B (7.26 GB) + YuE2-Vae (0.53 GB) for generation | ~12.2 GB for the full capability set |
+| Network | Once, ~18 GB | `python.org`, `rocm.nightlies.amd.com`, `huggingface.co` or `hf-mirror.com` |
+| Not needed | CUDA, Triton, flash-attn, ComfyUI | Proven by running on a HIP-only build |
+
+Measured on the RX 6800: a 66.7 s song takes **890 s** end to end (13.35 s per audio second), about
+3.3× slower than the RX 9070 XT, because RDNA2 has no hardware BF16 and the two autoregressive
+stages run on emulated BF16.
+
+### Picking the right wheel index
+
+`scripts/rocm/setup_rocm_runtime.ps1` defaults to the RDNA4 index. Match it to your card:
+
+| Your GPU | Install command |
+|---|---|
+| RX 9000 series (gfx120X, RDNA4) | `setup_rocm_runtime.ps1` (defaults are correct) |
+| RX 7000 series (gfx110X, RDNA3) | `-Device gfx1100 -FamilyIndex https://rocm.nightlies.amd.com/v2/gfx110X-all/ -RocmExtra libraries,device-gfx1100` |
+| **RX 6000 series (gfx103X, RDNA2)** | see the block in [Quick start](#quick-start) — RDNA2 needs the staging index and explicit version pins |
+| Strix Halo / Radeon 890M | `-FamilyIndex https://rocm.nightlies.amd.com/v2/gfx1151/` (or `v2-staging/gfx1150/`) |
+
+RDNA2 note: the `v2` tree publishes ROCm runtime libraries for gfx103X but **no `torch`**. AMD builds
+RDNA2 torch wheels under `v2-staging/gfx103X-dgpu/`, which is also what the Wan2GP Windows/AMD guide
+documents for this family. Two further differences: the `rocm` sdist there publishes no
+`rocm-sdk-device-<isa>` package (so use `rocm[libraries,devel]`), and torchaudio's build string is not
+identical to torch's (`2.11.0a0+…` vs `2.11.0+…`).
+
+---
+
+## Quick start
+
+Prerequisites: an AMD driver and Windows 11; roughly 45 GB of disk; network access to
+`rocm.nightlies.amd.com` and `hf-mirror.com`.
 
 ```powershell
 git clone https://github.com/Newaiguy/YuE2-T8-ROCm.git
 cd YuE2-T8-ROCm
 
-# 1) 建 ROCm 运行时（嵌入式 CPython 3.12 + AMD TheRock torch，约 6-7 GB）
+# 1) Build the ROCm runtime (embedded CPython 3.12 + AMD TheRock torch, ~6-7 GB)
 powershell -ExecutionPolicy Bypass -File scripts\rocm\setup_rocm_runtime.ps1
 
-# 2) 模型（约 12.2 GB；huggingface.co 不通时用镜像脚本）
+#    RDNA2 (RX 6800 / 6900, gfx1030) instead:
+#    powershell -ExecutionPolicy Bypass -File scripts\rocm\setup_rocm_runtime.ps1 `
+#        -Device gfx103X-dgpu `
+#        -TorchVersion '2.11.0+rocm7.13.0a20260421' `
+#        -TorchAudioVersion '2.11.0a0+rocm7.13.0a20260421' `
+#        -FamilyIndex 'https://rocm.nightlies.amd.com/v2-staging/gfx103X-dgpu/' `
+#        -RocmExtra 'libraries,devel' -RocmFromFamilyIndex
+
+# 2) Models (~12.2 GB; use the mirror script if huggingface.co is unreachable)
 runtime\python.exe -m huggingface_hub.cli.hf download t8star/YuE2-Comfy `
     --revision a083f106499daead99259dd0c443a5494254cfc5 --local-dir models
-#    或： python scripts\rocm\fetch_mirror_models.py
+#    or: python scripts\rocm\fetch_mirror_models.py
 
-# 3) 校验（走 t8 自己的清单）
+# 3) Verify (using t8's own manifests)
 runtime\python.exe scripts\verify_models.py --root .
 runtime\python.exe scripts\verify_voice_models.py --root .
 
-# 4) 启动
-start_rocm.bat            # 浏览器打开 http://127.0.0.1:8189
+# 4) Launch
+start_rocm.bat            # opens http://127.0.0.1:8189 in your browser
 
-# 5) 端到端验证
+# 5) End-to-end verification
 python scripts\rocm\verify_capabilities.py
 ```
 
-> 本仓库里的源码**已经打好全部移植补丁**，所以第 2 步之后不需要再跑
-> `apply_rocm_port.py`（它会全部报 SKIP）。如果你是拿 upstream 的干净检出，
-> 才需要 `python scripts\rocm\apply_rocm_port.py .`。
+> The source in this repository **already has every porting patch applied**, so you do not need to run
+> `apply_rocm_port.py` after step 2 (it reports SKIP for everything). You only need
+> `python scripts\rocm\apply_rocm_port.py .` if you started from a clean upstream checkout.
+
+### Generation-only install (7.8 GB instead of 12.2 GB)
+
+If you only want to make songs, the official weights are enough and are byte-identical to the hashes
+this repository pins:
+
+```powershell
+git clone --depth 1 https://github.com/multimodal-art-projection/YuE.git YuE
+powershell -ExecutionPolicy Bypass -File scripts\rocm\fetch_example_models.ps1
+```
+
+`YuE/` is deliberately **not committed** (it is an upstream clone, and a nested git repository cannot
+be committed cleanly) — clone it into the repository root as shown.
 
 ---
 
-## 移植改了什么
+## Running the original example song
 
-源码改动 **3 处**（都在最小范围内，且尽量做成设备无关）：
+The request that ships with the upstream project is `examples/song.json` — id `city_lights`, English
+warm piano pop, seed 831001, `cot="full"`.
 
-| # | 文件 | 问题 → 修法 |
+```powershell
+runtime\python.exe scripts\rocm\run_example_song.py --output outputs\city_lights
+runtime\python.exe scripts\rocm\verify_example_song.py outputs\city_lights
+```
+
+The runner differs from upstream's `examples/generate.py` in three ways: it imports the
+ROCm-patched `yue2` from `vendor/` (so the port actually applies), it resolves weights from local
+directories instead of the Hub, and it defaults to the settings measured good on a 16 GB Windows ROCm
+card (`--backend torch-eager`, `--vae-core-frames 512`, `--memory-budget-gib 16`).
+
+Result on the RX 6800 — 48 kHz stereo, 66.679 s, all samples finite, 10 artifacts hash-verified
+against `result.json`.
+
+---
+
+## What this fork changes
+
+### 1. The runtime is AMD, not NVIDIA
+
+`scripts/rocm/setup_rocm_runtime.ps1` reproduces upstream's layout and verification contract but
+swaps the wheel source to AMD TheRock. It installs with **uv rather than pip** (the AMD `rocm`
+package is an sdist and the embedded interpreter has no setuptools), and it asserts
+`torch.version.cuda is None` at the end — otherwise a failed ROCm install silently falls back to the
+PyPI CUDA build and everything still *looks* installed.
+
+### 2. Four source fixes, all device-agnostic
+
+| # | File | Problem → Fix |
 |---|---|---|
-| 1 | `vendor/yue2/cuda_graph.py` | 解码时 `RuntimeError: [ROCm] mha_varlen_fwd: seqused_k must be nullopt`。后端探测**只看 ATen schema**，而 schema 跨后端共享 → 在 HIP 上误选 flash。改为 HIP 构建强制走掩码 SDPA（实测与 eager 数值差 **0.0**） |
-| 2 | `vendor/seed-vc/inference.py` | CAMPPlus / RMVPE 是 `load_models()` 里仅剩的 fp32 模型，fp32 batchnorm 触发 MIOpen 经 HIPRTC 运行时编译，而 TheRock wheel 不带 libc++ 头 → `'type_traits' file not found` → `miopenStatusUnknownError`。改为跟随 `fp16` |
-| 3 | `app/yue2_app/voice_worker.py` | 同类 JIT 失败在别的 fp32 kernel 上复发。该 worker 关闭 MIOpen（ROCm PyTorch 里 `torch.backends.cudnn` 就是 MIOpen），conv/BN/RNN 走原生实现。**仅在 HIP 上生效，CUDA 用户保持 cuDNN** |
-| 4 | `app/yue2_app/core_worker.py` | VAE 分块由 budget 单值推导（`>12GiB → 1024`），隐含 24 GB 卡。改为按实卡显存自适应（`<20GiB → 512`），**同一请求 613.7 s → 393.4 s（−35.9 %）** |
+| 1 | `vendor/yue2/cuda_graph.py` | `RuntimeError: [ROCm] mha_varlen_fwd: seqused_k must be nullopt`. Backend detection **looks only at the ATen schema**, and schemas are shared across backends → flash is picked wrongly on HIP. Fix: HIP builds are forced onto masked SDPA (measured difference from eager: **0.0**). Do **not** instead pass `seqused_k=None` — variable-length FA then attends to unused future cache slots and computes wrong results |
+| 2 | `vendor/seed-vc/inference.py` | CAMPPlus / RMVPE are the last fp32 models left in `load_models()`; fp32 batchnorm makes MIOpen compile through HIPRTC at runtime, while the TheRock wheel ships no libc++ headers → `'type_traits' file not found` → `miopenStatusUnknownError`. Fix: follow `fp16` |
+| 3 | `app/yue2_app/voice_worker.py` | The same JIT failure returned on other fp32 kernels. This worker disables MIOpen (in ROCm PyTorch, `torch.backends.cudnn` *is* MIOpen), so conv/BN/RNN use native implementations. **Applies on HIP only; CUDA users keep cuDNN** |
+| 4 | `app/yue2_app/core_worker.py` | The VAE tile size was derived from a single budget value (`>12GiB → 1024`), implicitly assuming a 24 GB card; on 16 GB that hits a far slower MIOpen convolution solver. Fix: adapt to the card's actual VRAM (`<20GiB → 512`) — **the same request went from 613.7 s to 393.4 s (−35.9 %)** |
 
-站点包改动 **1 处**（无法进仓库，故提供脚本）：`descript-audiotools` 在类体导入时对
-`dist.ReduceOp` 求值，torch ≥ 2.9 把它变成惰性模块 → `AttributeError`，Seed-VC 完全
-无法启动。见 `scripts/rocm/patch_audiotools.py`。
+Fix 4 is not AMD-specific: any 16 GB card benefits. The measured tile sizes were
+512 → 101.6 s, 1024 → 230.9 s, untiled → 285.0 s for the same latent, with identical audio RMS.
 
-完整记录、性能数据、踩过的坑：**[`docs/ROCM_PORT.md`](docs/ROCM_PORT.md)**。
-三运行时时期的原始报告见 [`docs/PORT_REPORT.md`](docs/PORT_REPORT.md)。
+### 3. One site-packages patch
 
----
+`descript-audiotools` (pulled in by `demucs → dac`) evaluates `dist.ReduceOp` while importing in the
+class body, and torch ≥ 2.9 turns that into a lazy module → `AttributeError`, which stops Seed-VC
+from starting at all. This is not an AMD problem — it reproduces on NVIDIA with torch ≥ 2.9. Fix:
+`scripts/rocm/patch_audiotools.py`.
 
-## 与上游的关系
+### 4. RDNA2 (gfx1030) support
 
-本仓库基于上游 **`main`（v1.3.0, `c91ab46`）**，把移植内容整理成了三个上游 PR：
+See [Picking the right wheel index](#picking-the-right-wheel-index) and
+[`docs/GFX1030_RX6800.md`](docs/GFX1030_RX6800.md). RDNA2 has no hardware BF16, so
+`torch.cuda.is_bf16_supported()` returning `True` proves nothing — the port documents which kernels
+actually compute correctly (`scripts/rocm/check_gfx1030_gpu.py` checks each against a float32
+reference) and why the autoregressive stages run ~4.5× slower there.
 
-| 分支 | 内容 |
+### 5. English documentation, filenames and UI
+
+- All documentation and launcher filenames are English. The Chinese-named launchers were renamed
+  (`安装运行环境.bat` → `install_environment.bat`, and so on) and their call sites updated.
+- **Every root `.bat` is now pure ASCII.** t8's own docs record that non-ASCII in a `.bat` makes
+  `cmd.exe` re-tokenise lines mid-character and the launcher crash on double-click; the Chinese
+  `echo`/`title` lines were the last files still carrying that risk.
+- **The WebUI has an English / 中文 toggle** in the header. `app/web/i18n.js` is the engine (keyed
+  strings, `data-i18n*` attributes, localStorage persistence, a `yue2:locale` event for re-renders);
+  four dictionaries hold the strings; `app/yue2_app/i18n.py` + `i18n_catalog.py` handle the prose the
+  *server* generates (job summaries, validation errors, worker failures) plus the
+  `X-YuE2-Locale` request header. See [`docs/WEBUI_I18N.md`](docs/WEBUI_I18N.md).
+
+  Option **values** that are validated in Python (`'中文'`, `'标准 / Standard'`, `'保留 / Preserve'`)
+  are deliberately kept byte-identical and only their **labels** are translated, so saved drafts and
+  the validation path are unaffected.
+
+### 6. Verification tooling
+
+The port ships the checks it was validated with, so a claim can be re-run rather than trusted:
+
+| Tool | What it proves |
 |---|---|
-| `fix/rocm-torch-compat` | 上面 1–3 三处源码修复 |
-| `feat/device-aware-vae-tile` | 上面第 4 处（按显存自适应 VAE 分块） |
-| `docs/rocm-port-guide` | `docs/ROCM_PORT.md` + `scripts/rocm/*`（纯新增文件） |
+| `scripts/rocm/check_gfx1030_gpu.py` | Each GPU kernel the generation path uses, against a float32 reference |
+| `scripts/rocm/measure_vram.py` | The resident VRAM floor, attributed per component |
+| `scripts/rocm/verify_example_song.py` | Artifacts re-hashed against `result.json` + audio statistics |
+| `scripts/rocm/verify_capabilities.py` | doctor + transcription + voice conversion through the service API |
+| `scripts/rocm/check_i18n_coverage.py` | Every i18n key referenced is defined in both locales |
+| `scripts/rocm/verify_server_i18n.py` | zh vs en responses across 12 endpoints |
+| `scripts/rocm/verify_webui_i18n.py` | The toggle in a real browser, including the engine's own semantics |
+| `scripts/rocm/run_tests.py` | The unittest suite without pytest |
 
-这些分支在 fork [Newaiguy/Comfyui-YuE2-T8](https://github.com/Newaiguy/Comfyui-YuE2-T8) 上。
-提 PR 的方案与论证见 [`docs/UPSTREAM_PR_PLAN.md`](docs/UPSTREAM_PR_PLAN.md)。
-
-上游若合并了对应改动，本仓库可以用 `scripts/rocm/apply_rocm_port.py` 重新对齐
-（它会跳过已经存在的改动，锚点消失的条目报 `GONE` 而不是失败）。
-
-> ⚠️ `pyproject.toml` 里的节点名仍然是上游的 `yue2-t8`（ComfyUI 节点包名，必须保持一致才能
-> 被 ComfyUI 正确加载）。**本仓库不发布、也不应发布到 ComfyUI Registry** ——
-> 那里对应的是上游项目。上游的 `.github/workflows/publish.yml` 已从本仓库移除，
-> 正是为了避免误发布。
+Full write-up, performance data and pitfalls: **[`docs/ROCM_PORT.md`](docs/ROCM_PORT.md)**.
+The three-runtime-era original report is in [`docs/PORT_REPORT.md`](docs/PORT_REPORT.md).
 
 ---
 
-## 已知限制
+## Relationship to upstream
 
-1. **`quantization="fp8"` 绝不可用。** capability 门会通过（本机报 `(12, 0)`），
-   `torch._scaled_mm` 也存在，但对反量化权重的**相对误差 90–117** —— 不是精度损失，
-   是**计算错误**，会静默产出垃圾音频。
-2. **MIOpen 的 JIT 依赖只在 voice worker 绕开了**，未根治。core 的 GEMM 走预编译
-   kernel 无碍；将来若触发新的 JIT kernel 会以同样方式失败。把 libc++ 头平铺进 clang
-   资源目录**无效**（HIPRTC 搜索路径不含资源目录）。
-3. **应用内自更新会冲掉移植**。本包让它恒返回"已是最新"；升级请重装后重跑补丁脚本。
-4. **NAR 阶段比官方 CLI 路线慢约 16 s**（占总时长 <5 %），原因未定位。
+This repository is based on upstream **`main` (v1.3.0, `c91ab46`)** and splits the port into three
+upstream PRs:
+
+| Branch | Contents |
+|---|---|
+| `fix/rocm-torch-compat` | Source fixes 1–3 above |
+| `feat/device-aware-vae-tile` | Fix 4 above (VRAM-adaptive VAE tiling) |
+| `docs/rocm-port-guide` | `docs/ROCM_PORT.md` + `scripts/rocm/*` (new files only) |
+
+These branches live on the fork [Newaiguy/Comfyui-YuE2-T8](https://github.com/Newaiguy/Comfyui-YuE2-T8).
+The PR proposal and its reasoning are in [`docs/UPSTREAM_PR_PLAN.md`](docs/UPSTREAM_PR_PLAN.md).
+
+If upstream merges the corresponding changes, this repository can be realigned with
+`scripts/rocm/apply_rocm_port.py` (it skips changes that are already present, and reports `GONE`
+instead of failing for entries whose anchor has disappeared).
+
+> ⚠️ The node name in `pyproject.toml` is still upstream's `yue2-t8` (the ComfyUI node package name,
+> which has to stay identical for ComfyUI to load it correctly). **This repository is not published —
+> and should not be published — to the ComfyUI Registry**; that entry belongs to the upstream project.
+> Upstream's `.github/workflows/publish.yml` has been removed from this repository precisely to avoid
+> an accidental publish.
 
 ---
 
-## 许可证与署名
+## Known limitations
 
-- 上游 t8 代码：见 [`LICENSE`](LICENSE)（Copyright T8star-Aix），本仓库沿用。
-- **YuE2 权重：CC BY-NC 4.0 —— 非商用**，见 [`MODEL_LICENSE`](MODEL_LICENSE)。
-- SheetSage2 / MERT 见各自 LICENSE；Seed-VC 为 GPL-3.0；Demucs 为 MIT。
-- 第三方说明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
-- 上游项目与作者：<https://space.bilibili.com/385085361>（B站 UP 主 T8star-Aix）。
-  这个移植能低成本完成，是因为 t8 的架构（隔离 worker、vendored 依赖、SHA 清单校验）
-  本身就把"换一套运行时"变成了一件局部的事。
+1. **`quantization="fp8"` is never usable on ROCm.** The capability gate passes (this machine reports
+   `(12, 0)`) and `torch._scaled_mm` exists, but the **relative error on the dequantized weights is
+   90–117** — not a precision loss but a **computation error**, and it silently produces garbage audio.
+2. **The MIOpen JIT dependency is only worked around in the voice worker**, not fixed at the root.
+   Core GEMM uses precompiled kernels and is fine; a future JIT kernel would fail the same way.
+   Flattening libc++ headers into the clang resource directory **does not work** — HIPRTC's search
+   path does not include the resource directory.
+3. **Device support is limited by AMD's wheel matrix**, not by this port. If AMD publishes no Windows
+   ROCm `torch` for your family, there is no supported path here.
+4. **RDNA2 is slow at generation**: ~3.3× slower end to end than RDNA4, concentrated in the two
+   autoregressive stages, because BF16 is emulated.
+5. **In-app self-update would overwrite the port.** This bundle makes it always return "up to date";
+   to upgrade, reinstall and re-run the patch script.
+6. **The NAR stage is about 16 s slower than the official CLI route** (under 5% of total runtime);
+   the cause has not been identified.
+
+---
+
+## Licenses and attribution
+
+- Upstream t8 code: see [`LICENSE`](LICENSE) (Copyright T8star-Aix), reused as-is here.
+- **YuE2 weights: CC BY-NC 4.0 — non-commercial**, see [`MODEL_LICENSE`](MODEL_LICENSE).
+- SheetSage2 / MERT: see their respective LICENSE files; Seed-VC is GPL-3.0; Demucs is MIT.
+- Third-party notices: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+- Upstream projects: [multimodal-art-projection/YuE](https://github.com/multimodal-art-projection/YuE)
+  (the model and CLI) and [T8mars/Comfyui-YuE2-T8](https://github.com/T8mars/Comfyui-YuE2-T8)
+  (the WebUI and node pack, by the Bilibili creator T8star-Aix,
+  <https://space.bilibili.com/385085361>). This port was cheap to build because t8's architecture
+  (isolated workers, vendored dependencies, SHA manifest verification) already turns "swapping in a
+  different runtime" into a local change.

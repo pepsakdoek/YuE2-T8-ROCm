@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -65,7 +65,7 @@ internal static class YuE2Launcher
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("[启动成功] 本地工作室地址：http://127.0.0.1:" + port);
         Console.ResetColor();
-        Console.WriteLine("关闭此窗口不会停止后台服务；需要停止时请运行“停止本地服务.ps1”。");
+        Console.WriteLine("关闭此窗口不会停止后台服务；需要停止时请运行“stop_local_service.ps1”。");
         return Finish(0, null, noPause);
     }
 

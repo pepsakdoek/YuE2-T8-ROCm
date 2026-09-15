@@ -1,39 +1,39 @@
-# YuE2 本地整合包使用说明
+# YuE2 Local Bundle User Guide
 
-## 安装与启动
+## Installation and startup
 
-1. v1.3.0 完整整合包已经带好音乐模型、RVC 底模和一个共享的 Python 3.12.10 运行环境，本地 GGUF 后端也在同一环境中（GGUF 权重可选下载），直接双击 `YuE2-T8.exe`，浏览器会打开 `http://127.0.0.1:8189`。如果系统拦截 EXE，也可双击兼容入口 `启动本地整合包.bat`。
-2. 首次使用可点右上角“重新进行完整自检”。服务只监听本机回环地址。
-3. `安装运行环境.bat` 用于修复、重新安装或下载缺失组件，正常首次启动不需要运行。
+1. The complete v1.3.0 bundle already includes the music models, the RVC base model, and a shared Python 3.12.10 runtime, and the local GGUF backend lives in that same environment (GGUF weights are an optional download). Just double-click `YuE2-T8.exe` and the browser opens `http://127.0.0.1:8189`. If the system blocks the EXE, you can also double-click the compatibility entry point `start_local_studio.bat`.
+2. On first use, click "Run full self-check again" in the top-right corner. The service only listens on the local loopback address.
+3. `install_environment.bat` repairs, reinstalls, or downloads missing components; a normal first launch does not need it.
 
-启动窗口会显示环境检查、服务状态、本地地址或失败原因，并等待用户按键后关闭。网页和启动窗口关闭后服务仍在后台运行；需要停止时，右键用 PowerShell 运行 `停止本地服务.ps1`，或在 PowerShell 中执行它。停止操作会同时结束当前推理 worker。
+The launcher window shows the environment check, the service status, the local address, or the reason for failure, and waits for a keypress before closing. The service keeps running in the background after the web page and the launcher window are closed. To stop it, right-click `stop_local_service.ps1` and run it with PowerShell, or execute it from a PowerShell prompt. Stopping the service also terminates the currently running inference worker.
 
-同一台电脑只能有一套 YuE2 使用 8189 端口。启动器发现另一套空闲 YuE2 时会核对服务进程并自动切换到当前整合包；如果另一套正在生成或还有排队任务，启动器会保留原任务并提示任务编号，待任务结束后重新启动即可。
+Only one YuE2 installation on a machine can use port 8189. When the launcher finds another YuE2 instance that is idle, it checks the service process and switches to the current bundle automatically; if the other instance is generating or still has queued jobs, the launcher leaves those jobs alone and reports their job numbers, so you can restart it once they finish.
 
-## 页面自动更新
+## Automatic page updates
 
-v1.2.2 及以上版本会在打开页面后自动检查 GitHub 稳定版，入口位于首页右上方“运行环境已就绪”卡片底部。显示新版时点击“更新到 vX”；下载和 SHA256 校验完成后，本地服务会退出、替换代码并在原端口重新启动，页面随后自动刷新。
+v1.2.2 and later check GitHub for the stable release after the page is opened; the entry point is at the bottom of the "Runtime environment ready" card in the top right of the home page. When a new version is shown, click "Update to vX"; once the download and the SHA256 check finish, the local service exits, replaces the code, and restarts on the same port, after which the page refreshes automatically.
 
-更新保留模型、本地 GGUF、作品、上传文件、导出、日志、缓存、助手草稿和设置。有运行或排队任务时先等待任务结束。升级到统一环境时先下载校验新环境及缺失底模，再退出旧服务并切换；启动失败恢复旧代码与运行时，启动通过后才清理旧环境。代码备份位于 `logs/backups`，需预留下载和新旧环境并存的临时空间。
+An update preserves models, local GGUF models, works, uploads, exports, logs, caches, assistant drafts, and settings. If jobs are running or queued, wait for them to finish first. When upgrading to the unified environment, the new environment and any missing base models are downloaded and verified first, then the old service exits and switches over; if startup fails, the old code and runtime are restored, and the old environment is only cleaned up after startup succeeds. Code backups live in `logs/backups`, so leave temporary space for the download and for the old and new environments to coexist.
 
-v1.2.0 / v1.2.1 没有这个页面入口。请把新版完整版解压到新目录，再设置已有模型路径；原目录和作品先保留。不要仅覆盖 v1.3.0 代码到旧多环境目录。
+v1.2.0 / v1.2.1 have no such page entry point. Unpack the new full version into a new directory, then point it at your existing model path; keep the old directory and its works for now. Do not just overwrite the v1.3.0 code into the old multi-environment directory.
 
-## 显存预算设置
+## VRAM budget settings
 
-创作页展开“高级设置”即可编辑“显存预算 GiB”；乐谱页和旋律重制页也有同一设置。输入后自动同步到三个页面，并在当前浏览器保留。生成计划、精确恢复、编辑后渲染和参考音色翻唱中的歌曲生成均使用当前预算，不再固定为 23.5 或 24 GiB。
+Expand "Advanced settings" on the Create page to edit "VRAM budget GiB"; the Score page and the Melody remake page have the same setting. Values you enter are synced across all three pages and kept in the current browser. Plan generation, exact recovery, render-after-edit, and the song generation inside a reference-voice cover all use the current budget, instead of a fixed 23.5 or 24 GiB.
 
-预算必须大于 2 GiB，没有 12–24 GiB 的输入范围限制。请根据显卡当前可用显存设置；其中包含 2 GiB 预留。调低预算不会缩小模型，也不保证小显存显卡能完成生成。已有歌曲的直接换声以及 RVC 训练使用各自的资源管理，不受这个 YuE2 歌曲生成预算控制。
+The budget must be greater than 2 GiB; there is no 12–24 GiB input range restriction. Set it according to the VRAM your GPU currently has available; it includes a 2 GiB reserve. Lowering the budget does not shrink the models, and it does not guarantee that a low-VRAM GPU can complete a generation. Direct voice conversion of an existing song and RVC training use their own resource management and are not governed by this YuE2 song-generation budget.
 
-## 模型位置
+## Model location
 
-模型仓库：https://huggingface.co/t8star/YuE2-Comfy
+Model repository: https://huggingface.co/t8star/YuE2-Comfy
 
-默认使用整合包根目录下的 `models`。需要把模型放到其他硬盘时，可以启动工作室后展开页面里的“模型位置与安装说明”，填写绝对路径并点“保存并检查”；也可以先双击 `设置模型路径.bat`。WebUI、ComfyUI 节点、模型自检和修复安装都会读取同一个 `settings.json`。
+The bundle uses `models` in its root directory by default. To keep the models on another drive, start the studio and expand "Model location and installation notes" on the page, enter the absolute path, and click "Save and check"; you can also double-click `set_model_path.bat` first. The WebUI, the ComfyUI nodes, model self-check, and repair installation all read the same `settings.json`.
 
-所选路径本身就是模型根目录，必须直接包含：
+The path you choose is itself the model root directory and must directly contain:
 
 ```text
-<模型根目录>\
+<model_root>\
   MODEL_MANIFEST.json
   VOICE_MODEL_MANIFEST.json
   YuE2-3B\
@@ -45,93 +45,93 @@ v1.2.0 / v1.2.1 没有这个页面入口。请把新版完整版解压到新目�
   RVC\
 ```
 
-不要把权重放到 ComfyUI 的 `models/checkpoints`。如果模型尚未下载，可先设置路径，再运行 `安装运行环境.bat`；安装脚本会从上面的 Hugging Face 仓库下载到当前路径。模型路径只能在没有运行或排队任务时更改。
+Do not put weights in ComfyUI's `models/checkpoints`. If the models have not been downloaded yet, you can set the path first and then run `install_environment.bat`; the installer downloads from the Hugging Face repository above into the current path. The model path can only be changed when no jobs are running or queued.
 
-## AI 创作助手
+## AI creation assistant
 
-独立整合包的“AI 创作助手”可以先写歌词、曲风和 ABC，再把选中的内容发送到“创作”“乐谱计划”或“旋律重制 / 参考音色”。该板块不新增 ComfyUI 节点。
+The "AI creation assistant" in the standalone bundle can write lyrics, style, and ABC first, then send the selected content to "Create", "Score plan", or "Melody remake / reference voice". This section adds no ComfyUI nodes.
 
-先选择渠道：贞贞平价小屋、贞贞的 AI 工坊、OpenAI 兼容接口或本地 GGUF。平价小屋默认模型为 `bytedance/doubao-seed-evolving`，AI 工坊默认模型为 `gemini-3.5-flash`；切换渠道会自动填入对应默认值。模型框可从下拉项选择，也可手动填写完整 ID；“获取模型 LIST”会请求该渠道的标准 OpenAI `/models` 接口，成功后把账号可用模型加入下拉框。部分兼容服务不提供该接口，失败时默认模型和手动填写仍然可用。
+First choose a channel: Zhenzhen Budget Shop, Zhenzhen's AI Workshop, an OpenAI-compatible endpoint, or local GGUF. The Budget Shop default model is `bytedance/doubao-seed-evolving` and the AI Workshop default model is `gemini-3.5-flash`; switching channels fills in the matching default automatically. The model field can be picked from the drop-down or typed in as a full ID; "Get model LIST" queries that channel's standard OpenAI `/models` endpoint and, on success, adds the models available to the account to the drop-down. Some compatible services do not offer that endpoint; when it fails, the default model and manual entry still work.
 
-填写密钥后保存设置，默认只在本次服务会话有效；勾选“记住”才使用 Windows 当前用户加密保存。任务和导出文件只保存凭据引用。关闭服务后，未记住的密钥需要重新填写。页面提供对应的注册入口：[获取贞贞平价小屋 API Key](https://api.seedance.nz/sign-up?aff=5f4w)；[获取贞贞的 AI 工坊 API Key](https://ai.t8star.org/register?aff=dP7j)。OpenAI 兼容接口支持 HTTPS 及本机 HTTP 服务，其模型 ID 和 API Key 由对应服务商提供。
+After entering your key, save the settings; by default it is valid only for this service session. The key is stored encrypted for the current Windows user only if you tick "Remember". Jobs and exported files keep only a credential reference. After the service stops, any key that was not remembered has to be entered again. The page provides the matching sign-up entries: [Get a Zhenzhen Budget Shop API Key](https://api.seedance.nz/sign-up?aff=5f4w); [Get a Zhenzhen AI Workshop API Key](https://ai.t8star.org/register?aff=dP7j). The OpenAI-compatible endpoint supports HTTPS as well as local HTTP services, and its model IDs and API key are provided by the respective provider.
 
-使用 API 无需下载或设置本地 LLM。[本地 LLM 模型下载（可选）](https://pan.quark.cn/s/55eab3bb2d9b)：解压后可填写存放 GGUF 的目录，例如 `E:\LLM`；目录不是必填项，留空时默认扫描模型根目录的 `LLM` 文件夹。完整包已带本地 LLM 后端，直接选择模型并测试连接；`安装本地LLM.bat` 用于修复共享环境中的该组件。分片模型选择第一片，其他分片必须齐全；不需要视觉投影模型。目录列表会显示可读取的架构、上下文和分片信息。模型权重需要自己准备，创作按钮不会自动下载。 统一环境实测 Qwen3.8-27B-Q4_K_M 生成歌词、曲风和有效 ABC，并完成跨页发送；另一份 ABC 样例未通过时值校验，已保留词与曲风。因此默认仍由 YuE2 规划乐谱。本地模型的作谱能力需按实际输出判断。
+Using the API requires no local LLM download or setup. [Local LLM model download (optional)](https://pan.quark.cn/s/55eab3bb2d9b): after unpacking, you can enter the directory that holds the GGUF files, for example `E:\LLM`; the field is optional, and when left empty the `LLM` folder under the model root is scanned by default. The full bundle already includes the local LLM backend, so simply choose a model and test the connection; `install_local_llm.bat` repairs that component in the shared environment. For a sharded model, select the first shard; all other shards must be present. No vision projection model is needed. The directory listing shows the readable architecture, context, and shard information. Model weights are yours to provide; the Create button never downloads them automatically. In the unified environment, Qwen3.8-27B-Q4_K_M was measured generating lyrics, style, and valid ABC and completing a cross-page send; a second ABC sample failed the duration check, so its lyrics and style were kept. The default therefore remains that YuE2 plans the score. Judge a local model's scoring ability by its actual output.
 
-默认先生成歌词和曲风，乐谱交给目标页面的 YuE2 规划。希望当前 LLM 一并作谱时，选择“自动创作 ABC”；完整乐谱通常比文本耗时更长，未通过检查时最多修正一次。失败会保留已完成的词和曲风，不能通过校验的谱面不会作为可用乐谱发送。
+By default it generates lyrics and style first and leaves the score to YuE2 planning on the target page. If you want the current LLM to compose the score as well, select "Compose ABC automatically"; a full score usually takes longer than text, and a failed check allows at most one correction. On failure the finished lyrics and style are kept, and a score that fails validation is never sent as a usable score.
 
-歌词模式支持生成、严格保留、局部改词和纯器乐。严格保留以服务端收到的原文为准，浏览器粘贴时可能规范化换行。结果可编辑、复制、下载；手工编辑 ABC 后须重新校验。仅重试 ABC 会使用当前编辑后的词和曲风，不重新生成它们。网络中断不会自动重发请求，避免不明计费状态下重复调用。
+Lyric modes support generate, strict preservation, local rewording, and instrumental only. Strict preservation works from the exact text the server received, and pasting in a browser may normalise line breaks. Results can be edited, copied, and downloaded; after editing ABC by hand you must validate it again. Retrying only the ABC reuses the currently edited lyrics and style without regenerating them. A network interruption does not automatically resend the request, which avoids duplicate calls while the billing status is unclear.
 
-发送前可选择要覆盖的字段。目标已有草稿时会提示覆盖；发送后可撤销，后续手工编辑会阻止旧撤销覆盖新内容。发送外部 ABC 到“乐谱计划”会使用导入模式；发送 full 乐谱到旋律重制时须明确去除和弦，系统检查双声部旋律和节奏保持一致。纯器乐不进行参考人声转换。
+Before sending, choose which fields to overwrite. If the target already has a draft you are warned that it will be overwritten; a send can be undone, and later manual edits stop an old undo from overwriting new content. Sending external ABC to "Score plan" uses import mode; sending a full score to Melody remake requires removing the chords explicitly, and the system checks that the two melody voices and the rhythm stay consistent. Instrumental only performs no reference-voice conversion.
 
-草稿和配置位于 `userdata/assistant`，任务输出仍在 `outputs/jobs`。刷新页面会恢复草稿及结果；任务完成时如果当前内容已被手工修改，会保留编辑并提供新结果入口。助手与音乐任务共用串行队列，本地 LLM 通过独立进程运行，任务结束释放模型。更换显卡层数或上下文后需重新测试；模型能加载不代表它能生成合格乐谱。
+Drafts and configuration live in `userdata/assistant`, and job outputs still go to `outputs/jobs`. Refreshing the page restores drafts and results; if the current content was edited by hand when a job finishes, the edits are kept and an entry point to the new result is offered. The assistant shares a serial queue with music jobs, the local LLM runs in a separate process, and the model is released when a job ends. After changing the GPU layer count or the context you must test again; a model that loads is not necessarily one that produces a usable score.
 
-## 歌曲生成
+## Song generation
 
-在“创作”页分别填写风格与歌词。歌词用 `[Verse]`、`[Chorus]` 等段落标签。`旋律 + 和弦`适合新歌，`仅旋律`适合让伴奏自由变化，`直接生成`不产生 ABC 计划。候选数量为 2–4 时按连续 seed 串行生成，已完成候选会保留。
+On the "Create" page, fill in the style and the lyrics separately. Tag sections in the lyrics with `[Verse]`, `[Chorus]`, and so on. `Melody + chords` suits a new song, `Melody only` lets the accompaniment vary freely, and `Direct generation` produces no ABC plan. With a candidate count of 2–4, candidates are generated serially from consecutive seeds, and finished candidates are kept.
 
-## 乐谱计划与编辑
+## Score plan and editing
 
-“乐谱计划”页只先生成 ABC。勾选“精确恢复原计划”会使用保存的原始 token 和 prefix，文本框不会覆盖它。要修改作品，请取消勾选、编辑 ABC，再渲染；系统会建立新任务并重生成整首音频。
+The "Score plan" page generates ABC only first. Ticking "Restore the exact original plan" uses the saved original tokens and prefix, and the text box does not overwrite it. To modify the work, untick it, edit the ABC, and then render; the system creates a new job and regenerates the entire song.
 
-## 长曲与任务恢复（1.1.5）
+## Long songs and job recovery (1.1.5)
 
-声学合成默认按 256 行计算块运行，并把当前阶段不用的 AR 模块移到 CPU。计算块保留完整可见上下文，不会自动截短歌曲或减少生成步数。兼容模式使用分块 math 注意力；自动模式在可用时使用融合内核。
+Acoustic synthesis runs in compute blocks of 256 rows by default and moves AR modules that the current stage does not need to the CPU. Compute blocks keep the full visible context and never truncate the song or reduce the number of generation steps automatically. Compatible mode uses chunked math attention; automatic mode uses fused kernels when they are available.
 
-参考音色翻唱会先上传并保存参考声音，再交由后台依次生成歌曲、分离人声、转换音色与混音。提交完成后可以刷新或关闭网页；重新打开可查看任务进度与最近结果。服务进程本身关闭会中断任务，需要恢复。
+A reference-voice cover first uploads and saves the reference voice, then leaves the background to generate the song, separate the vocals, convert the voice, and mix, in that order. After submitting you can refresh or close the page; reopening it shows job progress and the most recent result. Closing the service process itself interrupts the job, and it then has to be recovered.
 
-完成后，当前页面标题下方直接显示播放器、成品时长和“下载音频”。如果完成时仍停留在该页面，会自动定位到结果；切换回来或刷新后仍保留最近作品。下载音频得到单个 FLAC，“导出全部文件”保存该任务的完整工件。历史页也继续保留全部任务。
+When a job finishes, the player, the finished duration, and "Download audio" appear directly below the page title. If you are still on that page when it finishes, the view moves to the result automatically; switching back or refreshing still keeps the most recent work. Downloading the audio gives you a single FLAC, and "Export all files" saves the job's complete artifacts. The history page also keeps every job.
 
-失败或取消后，在最近任务卡或历史中点击“从已保存阶段继续”。计划、结构、声学结果以及人声分离/转换均有完整性检查。旧版没有保存中间结果的任务只能重新运行。恢复不会修改原任务记录；新任务复用有效阶段，并记录来源。
+After a failure or cancellation, click "Continue from saved stages" on the recent-job card or in the history. The plan, the structure, the acoustic results, and the vocal separation/conversion all have integrity checks. Older jobs that did not save intermediate results can only be run again. Recovery does not modify the original job record; the new job reuses the valid stages and records where they came from.
 
-进度按当前阶段显示，阶段完成不等于整首翻唱完成。显存预算只是进程分配上限；其他 GPU 应用仍可能减少可用空间。每个任务的 `resources.jsonl` 记录阶段显存；后台翻唱的子阶段日志位于任务的 `artifacts/stages` 中。
+Progress is shown per current stage, and a finished stage does not mean the whole cover is finished. The VRAM budget is only a per-process allocation ceiling; other GPU applications can still reduce the space available. Each job's `resources.jsonl` records per-stage VRAM; the sub-stage logs of a background cover live in the job's `artifacts/stages`.
 
-## 旋律重制与参考音色
+## Melody remake and reference voice
 
-上传原曲后先运行 SheetSage2 转谱。默认保留 Vocal 与 Ins 旋律并省略和弦。转谱可能有音高、拍号或段落错误，必须对照原音频人工核对；歌词需要自行粘贴并按段落整理。
+After uploading the original song, run SheetSage2 transcription first. By default it keeps the Vocal and Ins melodies and omits the chords. Transcription may get pitches, time signatures, or sections wrong, so you must check it by hand against the original audio; lyrics have to be pasted in and organised by section yourself.
 
-方案 A“旋律重制”按核对后的旋律、歌词和目标风格重新生成，使用 YuE2 自己的人声音色。方案 B“参考音色翻唱”在生成后继续执行 Demucs 分轨和 Seed-VC 音色转换。参考音频必须为 1–30 秒清晰单人干声，推荐 5–25 秒、无伴奏、少混响；高级设置可调整推理步数、音色强度、音高偏移和混音音量。请只使用本人声音或已经取得明确授权的声音。
+Option A, "Melody remake", regenerates from the checked melody, the lyrics, and the target style, using YuE2's own vocal timbre. Option B, "Reference voice cover", additionally runs Demucs stem separation and Seed-VC voice conversion after generation. The reference audio must be 1–30 seconds of clear solo dry vocal, ideally 5–25 seconds with no accompaniment and little reverb; advanced settings let you adjust inference steps, voice strength, pitch shift, and mix volume. Use only your own voice, or a voice you have explicit permission to use.
 
-## RVC：没有模型时如何训练
+## RVC: how to train when you have no model
 
-1. 打开“我的音色 / 训练”，新建项目，导入自己准备的演唱或说话素材。每段可试听和筛选；含伴奏的歌曲先分离人声，再确认用于训练。界面建议 10–50 分钟干净、音色一致的素材，先检查噪声、混响和目标音域。
-2. 选择训练设置并点击“检查训练条件”，查看底模、素材、磁盘、内存和当时剩余显存。检查通过不保证任意外部 GPU 负载下都能训练。
-3. 点击“开始 / 继续训练”，页面依次显示预处理、音高、特征、训练和索引进度，可查看日志。取消后保留已保存检查点；更换素材或模型结构应新建项目。
-4. 完成后在音色库试听、命名并发送到翻唱区；也可导入已有模型或导出训练音色。不要用少量轮次的流程验证模型判断最终音质。
+1. Open "My voices / Training", create a project, and import the singing or speech material you prepared. Each segment can be previewed and filtered; for a song with accompaniment, separate the vocals first and then confirm them for training. The interface recommends 10–50 minutes of clean material with a consistent timbre, so check for noise, reverb, and the target vocal range first.
+2. Choose the training settings and click "Check training conditions" to see the base model, the material, disk, memory, and the VRAM free at that moment. Passing the check does not guarantee that training will succeed under arbitrary external GPU load.
+3. Click "Start / continue training" and the page shows preprocessing, pitch, features, training, and index progress in turn, with logs available. Cancelling keeps the saved checkpoints; changing the material or the model architecture should mean starting a new project.
+4. When it finishes, preview it in the voice library, give it a name, and send it to the cover area; you can also import an existing model or export a trained voice. Do not judge final audio quality from a run with very few epochs.
 
-展开“素材、训练缓存与音色库位置”可分别选择三个空目录，先预览，再迁移。系统复制并校验文件后切换设置；取消可继续迁移，原目录保留备份，确认新位置可用后自行清理。原数据变更后需要重新预览，不能继续旧快照。
+Expanding "Asset, training cache, and voice library locations" lets you choose three empty directories separately: preview first, then migrate. The system copies and verifies the files before switching the settings; cancelling lets the migration continue, the original directory is kept as a backup, and you clean it up yourself once you have confirmed the new location works. After the original data changes you must preview again, and you cannot carry on from the old snapshot.
 
-## 直接换声与同曲对比
+## Direct voice conversion and same-song comparison
 
-在“旋律重制 / 参考音色”选择直接转换已有歌曲，上传并试听原曲，不需要 ABC 或重新生成歌曲。选择 RVC 时要选择训练或导入的音色；Seed-VC 使用短参考干声。也可按原来的转谱流程先生成新歌曲，再转换音色。
+On "Melody remake / reference voice", choose direct conversion of an existing song, upload the original, and preview it; no ABC and no song regeneration are needed. With RVC you choose a trained or imported voice; Seed-VC uses a short dry reference voice. You can also follow the original transcription flow to generate a new song first and then convert its voice.
 
-选择“Seed-VC / RVC · 同曲对比”后，为同一目标音色选择短参考声音和 RVC 模型。两路串行处理同一首歌，共用已校验的人声/伴奏缓存，结果可在当前页和历史页分别试听和下载。一路失败时保留另一路音频，并可从已保存阶段继续；任务失败标记不代表所有音频都丢失。对比用于自己选听，没有预设哪个模型音质更好。
+After choosing "Seed-VC / RVC · Same-song comparison", select a short reference voice and an RVC model for the same target voice. Both paths process the same song one after the other and share the validated vocal/accompaniment cache, and the results can be previewed and downloaded separately on the current page and in the history page. If one path fails, the other path's audio is kept and you can continue from saved stages; a failed job marker does not mean all the audio is lost. The comparison is for your own listening judgement, and no model is preset as sounding better.
 
-RVC 默认保留原调。选择音色后可查看训练素材的主要音域估计；它来自训练音高曲线的 5%–95% 分位，不是模型能唱出的硬性上下限。旧的已完成训练项目可点击继续训练，复用已有结果并补充统计；外部导入模型可能没有这项信息。
+RVC keeps the original key by default. After selecting a voice you can see the estimated main range of its training material; it comes from the 5%–95% quantiles of the training pitch curve and is not a hard upper or lower limit on what the model can sing. An old finished training project can be reopened to continue training, reusing the existing results and adding statistics; externally imported models may not have this information.
 
-高音失真时，先在“RVC 演唱音高”选择“低一个八度”试听，也可按半音手动调整。低八度等于 -12 半音，只改变转换人声的演唱音高，伴奏不移调；并非修复了原调高音能力。要保留原来的演唱音高，应尝试覆盖该音域的训练素材或其他音色模型。未启用音高条件的模型不支持此项。
+When high notes distort, first try "One octave lower" under "RVC singing pitch", or adjust manually in semitones. One octave lower equals −12 semitones and only changes the singing pitch of the converted vocal, without transposing the accompaniment; it is not a fix for an original inability to reach high notes. To keep the original singing pitch, try training material that covers that range or a different voice model. Models that do not support pitch conditioning do not offer this option.
 
-“检索贴合度”不是越高越好。咬字或杂音异常时，可点击“关闭检索，保留当前音高”作对照，再决定适合该音色的数值。同曲对比中 RVC 与 Seed-VC 分别设置音高；当前结果和历史记录都会标出 RVC 的实际移调。
+"Retrieval fit" is not a case of higher being better. When articulation or noise sounds wrong, click "Disable retrieval, keep current pitch" as a comparison and then decide which value suits that voice. In same-song comparison, RVC and Seed-VC have their own pitch settings; the current result and the history both mark RVC's actual transposition.
 
 ## ComfyUI
 
-在完整包中运行 `安装到ComfyUI.bat`，按提示填写自己的 ComfyUI 目录。也可在 PowerShell 中显式指定目录：
+Run `install_to_comfyui.bat` in the full bundle and enter your own ComfyUI directory when prompted. You can also specify the directory explicitly in PowerShell:
 
 ```powershell
-.\scripts\install_comfyui.ps1 -ComfyUIPath "D:\你的ComfyUI\ComfyUI"
+.\scripts\install_comfyui.ps1 -ComfyUIPath "D:\YourComfyUI\ComfyUI"
 ```
 
-重启 ComfyUI 后，在“YuE2 音乐”分类找到 12 个节点。`workflows` 目录包含歌词创作、计划后渲染、外部 ABC 重生成和参考音色翻唱四个前端工作流。节点会自动连接或启动共享服务，不会替换 ComfyUI 的 Torch。
+After restarting ComfyUI you will find 12 nodes under the "YuE2 Music" category. The `workflows` directory contains four front-end workflows: lyrics to song, plan-then-render, external ABC re-render, and reference-voice cover. The nodes connect to or start the shared service automatically and never replace ComfyUI's Torch.
 
-## 输出与故障
+## Output and troubleshooting
 
-每个任务位于 `outputs/jobs/<job_id>`，包含请求、状态、日志引用与完整生成工件。任务日志位于 `logs/<job_id>.log`，服务日志为 `logs/server.log`。WebUI 的“任务与版本”页可直接展开失败任务日志，也可点击“打开日志目录”或“打开输出目录”。`complete` 结果仍需查看 `truncated`；界面会把截断结果单独标出。取消在 VAE 解码阶段可能延迟，强制结束当前 worker 后下一个任务会冷启动。
+Each job lives in `outputs/jobs/<job_id>` and contains the request, the status, log references, and the complete generated artifacts. Job logs are in `logs/<job_id>.log`, and the service log is `logs/server.log`. The WebUI's "Jobs and versions" page can expand the log of a failed job directly, and also offers "Open log directory" and "Open output directory". A `complete` result still needs its `truncated` flag checked; the interface marks truncated results separately. Cancelling can be delayed during the VAE decode stage; force-ending the current worker makes the next job cold-start.
 
-服务首次启动会生成 `retention.json`，默认每 6 小时清理一次：终态任务保留 30 天、最多 100 个且不超过 100 GiB；上传保留 7 天且不超过 10 GiB；日志保留 30 天且不超过 2 GiB。可在 WebUI“任务与版本”页查看受管空间并手动清理。重要结果请先导出，`exports` 不受自动清理影响。
+On first start the service creates `retention.json` and cleans up every 6 hours by default: finished jobs are kept for 30 days, at most 100 of them, and no more than 100 GiB; uploads are kept for 7 days and no more than 10 GiB; logs are kept for 30 days and no more than 2 GiB. The WebUI's "Jobs and versions" page shows the managed space and lets you clean up manually. Export important results first; `exports` is not affected by automatic cleanup.
 
-高级 semantic、latent 与 decode 工件各自包含清单；继续下一阶段前会校验文件 SHA-256、固定模型仓库来源、运行时权重身份和上一阶段清单摘要。旧版或被修改的高级工件会被拒绝。
+Advanced semantic, latent, and decode artifacts each carry a manifest; before moving on to the next stage the system verifies the file SHA-256, the pinned model repository source, the runtime weight identity, and the previous stage's manifest digest. Old or modified advanced artifacts are rejected.
 
-模型、运行时和浏览器渲染组件均保存在本目录。正常生成、转谱与参考音色转换采用离线模式，不会首次点击时下载模型。
+The models, the runtime, and the browser rendering components are all stored in this directory. Normal generation, transcription, and reference-voice conversion run offline and never download a model on the first click.
 
-### 多套安装并存时指定端口
+### Specifying a port when several installations coexist
 
-默认地址为 `http://127.0.0.1:8189`。需要保留另一套正在运行的安装时，可运行 `YuE2-T8.exe --port 8198 --no-switch`，然后访问 `http://127.0.0.1:8198`。`--no-switch` 会在所选端口被另一套 YuE2 占用时停止启动并提示换端口。ComfyUI 客户端连接此实例时设置 `YUE2_SERVICE=http://127.0.0.1:8198`。
+The default address is `http://127.0.0.1:8189`. To keep another installation running, run `YuE2-T8.exe --port 8198 --no-switch` and then visit `http://127.0.0.1:8198`. `--no-switch` stops startup and suggests a different port when the chosen port is taken by another YuE2. When a ComfyUI client connects to this instance, set `YUE2_SERVICE=http://127.0.0.1:8198`.

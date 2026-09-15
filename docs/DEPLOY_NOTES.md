@@ -1,83 +1,91 @@
-# YuE2 on AMD RX 9070 XT — 部署记录
+# YuE2 on AMD RX 9070 XT — Deployment Notes
 
-实测环境：Windows 11 (build 26200) / AMD Radeon RX 9070 XT 16GB (gfx1201) /
-原生 Windows ROCm，**无 CUDA、无 Triton、无 flash-attn**。
+Test environment: Windows 11 (build 26200) / AMD Radeon RX 9070 XT 16GB (gfx1201) /
+native Windows ROCm, **no CUDA, no Triton, no flash-attn**.
 
-## 结论
+## Conclusion
 
-YuE2 在这张卡上**可以正常出歌**。官方 README 写的 "Linux + NVIDIA + 24GB VRAM"
-是推荐起点，不是硬门槛——24GB 那个数字在代码里只是 `memory_budget_gib` 参数的
-默认值，而且 `pipeline.py` 会自动按实卡显存裁剪：
+YuE2 **generates songs perfectly well** on this card. The "Linux + NVIDIA + 24GB VRAM"
+stated in the official README is a recommended starting point, not a hard requirement —
+that 24GB figure is nothing more than the default value of the `memory_budget_gib`
+parameter in the code, and `pipeline.py` clamps it automatically to the card's real VRAM:
 
 ```python
 budget = min((self.memory_budget_gib - 2) * 2**30, total - 2 * 2**30)
 ```
 
-16GB 卡上预算被夹到 13.92 GiB，实测够用。
+On a 16GB card the budget is clamped to 13.92 GiB, which measures as sufficient.
 
-## 三个必须知道的坑
+## Three pitfalls you have to know about
 
-### 1. CUDA graph 在 ROCm 上会误判后端并崩溃（已打补丁）
+### 1. CUDA graph misdetects the backend on ROCm and crashes (patched)
 
-`src/yue2/cuda_graph.py` 用 `device.type == "cuda"` 判断，而 ROCm 下这个值就是真。
-它只检查 ATen **schema** 里有没有 `seqused_k` 就选 flash 后端，**不看后端实现能力**，
-而 schema 是跨后端共享的。实测：
+`src/yue2/cuda_graph.py` branches on `device.type == "cuda"`, and under ROCm that value is
+simply true. It selects the flash backend by checking only whether `seqused_k` appears in
+the ATen **schema**, **without regard for what the backend can actually implement** — and
+the schema is shared across backends. Measured:
 
 ```
 RuntimeError: [ROCm] mha_varlen_fwd: seqused_k must be nullopt
 ```
 
-旁注：这个 ROCm 版本里 `torch.backends.cudnn.is_available()` 返回 **True**，但
-`CUDNN_ATTENTION` 实际是 RuntimeError，所以 cudnn 回退也指望不上。
+Side note: in this ROCm build `torch.backends.cudnn.is_available()` returns **True**, but
+`CUDNN_ATTENTION` actually raises a RuntimeError, so the cudnn fallback is not an option
+either.
 
-**补丁**（本目录 `YuE/src/yue2/cuda_graph.py` 已应用）：`attention_backend == "auto"`
-时在 HIP 上强制走掩码 SDPA。**不能**改成给 `seqused_k=None` 绕过去——那样变长 FA
-会去注意未使用的未来 cache 槽位，算出错误结果。
+**Patch** (already applied to `YuE/src/yue2/cuda_graph.py` in this directory): when
+`attention_backend == "auto"`, force masked SDPA on HIP. Do **not** instead pass
+`seqused_k=None` to sidestep it — variable-length FA would then attend to unused future
+cache slots and compute wrong results.
 
-已验证掩码 SDPA 在 CUDA graph 内：捕获成功、replay 响应原地更新的 positions、
-与 eager **数值差 0.000e+00**。
+Masked SDPA inside a CUDA graph has been verified to capture successfully, to replay
+correctly in response to in-place position updates, and to differ from eager by
+**0.000e+00**.
 
-### 2. 模型必须走 hf-mirror 直连，且不能用 huggingface_hub
+### 2. Models must be fetched directly from hf-mirror, and huggingface_hub cannot be used
 
-| 目标 | 结果 |
+| Target | Result |
 |---|---|
-| `huggingface.co` 取 6.76GB 权重 | ❌ `RemoteDisconnected`（小 API 请求能通，大文件被重置） |
-| `hf-mirror.com` 取权重 | ✅ HTTP 206，单流 ~5 MiB/s，6 路并发峰值 60 MiB/s |
+| Fetching the 6.76GB weights from `huggingface.co` | ❌ `RemoteDisconnected` (small API requests go through, large files get reset) |
+| Fetching weights from `hf-mirror.com` | ✅ HTTP 206, ~5 MiB/s on a single stream, 60 MiB/s peak with 6 parallel streams |
 
-但 `huggingface_hub` 对镜像不兼容（元数据层 `LocalEntryNotFoundError`），
-且 Windows 无开发者模式下缓存建符号链接会 `PermissionError`。
-**解决**：绕开 hub，用标准 HTTP 分块续传（见部署脚本 `mirror_download_v2.py`）。
-最终 6.76GB 主权重 9.2 分钟下完。
+But `huggingface_hub` is incompatible with the mirror (`LocalEntryNotFoundError` at the
+metadata layer), and on Windows without Developer Mode creating cache symlinks raises
+`PermissionError`.
+**Solution**: bypass the hub and use plain HTTP ranged resumption (see the deployment
+script `mirror_download_v2.py`). The 6.76GB main weights finished downloading in
+9.2 minutes.
 
-### 3. 不能装进 ComfyUI 便携包
+### 3. It cannot be installed into the ComfyUI portable package
 
-- ComfyUI 里是 `transformers 5.3.0`，YuE2 锁 `4.57.6`；且 YuE2 用
-  `torch_dtype=`（v5 已改名 `dtype=`）等旧 API。
-- 社区那个 ComfyUI 节点（`smthemex/ComfyUI_YuE`）包的是 **YuE v1 不是 YuE2**，
-  而且硬编码 `attn_implementation="flash_attention_2"`（无回退）、默认开
-  mmgp 和 `torch.compile(max-autotune)`，int8/exllamav2 量化在 ROCm 上全不可用。
+- ComfyUI ships `transformers 5.3.0` while YuE2 pins `4.57.6`; YuE2 also uses older APIs
+  such as `torch_dtype=` (renamed `dtype=` in v5).
+- That community ComfyUI node (`smthemex/ComfyUI_YuE`) wraps **YuE v1, not YuE2**; it also
+  hardcodes `attn_implementation="flash_attention_2"` (with no fallback), enables mmgp and
+  `torch.compile(max-autotune)` by default, and its int8/exllamav2 quantization paths are
+  all unusable on ROCm.
 
-## 安装要点（复现用）
+## Installation essentials (for reproduction)
 
 ```powershell
-# 1. venv（官方推荐 3.12）
+# 1. venv (upstream recommends 3.12)
 & 'D:\anaconda3\python.exe' -m venv D:\YuE2\venv
 $py = 'D:\YuE2\venv\Scripts\python.exe'
 & $py -m pip install --upgrade pip uv
 
-# 2. AMD TheRock ROCm（不是 PyPI 的 CUDA 版！）
+# 2. AMD TheRock ROCm (NOT the CUDA build from PyPI!)
 & $py -m uv pip install --extra-index-url https://rocm.nightlies.amd.com/v4/whl/ --pre "rocm[libraries,device-gfx1201]"
 & $py -m uv pip install --index-url https://rocm.nightlies.amd.com/v2/gfx120X-all/ torch
 
-# 3. YuE2 依赖（绝不能让它碰 torch）
+# 3. YuE2 dependencies (never let these touch torch)
 & $py -m uv pip install transformers==4.57.6 huggingface-hub==0.36.2 safetensors==0.7.0 `
     tiktoken==0.12.0 "numpy==2.2.6" soundfile==0.13.1 accelerate==1.13.0
 
-# 4. 关键：--no-deps，否则 pip 会用 PyPI 的 torch==2.10.0 覆盖掉 ROCm torch
+# 4. Critical: --no-deps, otherwise pip overwrites the ROCm torch with PyPI's torch==2.10.0
 & $py -m uv pip install --no-deps --editable D:\YuE2\YuE
 ```
 
-装完验证：
+Verify after installing:
 
 ```
 torch 2.11.0+rocm7.13.0a20260416   hip 7.2.0
@@ -86,141 +94,162 @@ available True                     bf16 True
 device AMD Radeon RX 9070 XT       yue2 import OK
 ```
 
-## 官方前端情况
+## State of the official front end
 
-官方仓库**没有本地 WebUI**。提供的是：
-- CLI：`yue2 generate --request examples/song.json --output outputs/song`
-- Python 分阶段 API：`plan() → generate_semantic() → synthesize() → decode()`
-- 官方 agent skill：`skills/yue2-music/SKILL.md`（可被支持 SKILL.md 的 agent 直接使用）
-- 在线 demo：https://map-yue2.github.io/（不是本地）
+The official repository has **no local WebUI**. What it does provide is:
+- CLI: `yue2 generate --request examples/song.json --output outputs/song`
+- A staged Python API: `plan() → generate_semantic() → synthesize() → decode()`
+- An official agent skill: `skills/yue2-music/SKILL.md` (usable directly by any agent that supports SKILL.md)
+- An online demo: https://map-yue2.github.io/ (not local)
 
-社区有 `T8mars/Comfyui-YuE2-T8`，带独立本地 WebUI（`127.0.0.1:8189`，不需要
-ComfyUI，靠隔离 worker 避免污染 ComfyUI 环境）。但它的安装脚本把三套内嵌
-Python 全锁在 `--index-url .../whl/cu128`，AMD 上**没有安装路径**，需要按上面的
-ROCm 源重写；且该项目零 AMD 支持、零 AMD 社区反馈，仅在 RTX 5090 Laptop 24GB
-上验证过。它的 `torch.cuda.is_available()` / BF16 断言在 ROCm 上恰好能过，
-默认 `backend="torch-eager"` 也绕开了 CUDA graph 坑——真正的门槛只有 cu128 轮子。
+The community project `T8mars/Comfyui-YuE2-T8` does come with its own local WebUI
+(`127.0.0.1:8189`, no ComfyUI required, using isolated workers to avoid polluting the
+ComfyUI environment). But its install script pins all three embedded Python environments
+to `--index-url .../whl/cu128`, which leaves **no installation path on AMD** — it has to be
+rewritten against the ROCm indexes given above; the project also has zero AMD support and
+zero AMD community feedback, having been validated only on an RTX 5090 Laptop 24GB. Its
+`torch.cuda.is_available()` / BF16 assertions happen to pass on ROCm, and its default
+`backend="torch-eager"` dodges the CUDA graph pitfall as well — the only genuine barrier is
+the cu128 wheels.
 
-## 性能实测（16GB / ROCm）
+## Measured performance (16GB / ROCm)
 
-同一首《city_lights》示例（示例歌词自然结束，均未截断），两种后端全长度对比：
+The same `city_lights` example (the example lyrics end naturally; none of the runs were
+truncated), full-length comparison across both backends:
 
-| 阶段 | `torch`（CUDA graph） | `torch-eager` |
+| Stage | `torch` (CUDA graph) | `torch-eager` |
 |---|---:|---:|
-| 歌曲时长 | 63.68s | 59.96s |
-| ABC 乐谱规划 | 28.5s（18.5 tok/s，528 tok） | 24.4s（22.1 tok/s，540 tok） |
-| 语义 token 生成 | 111.3s（**14.3 tok/s**，1593 tok） | 60.7s（**24.7 tok/s**，1500 tok） |
-| NAR flow matching | 6.36s（32 步） | 5.94s（32 步） |
-| VAE 音频解码 | 165.6s / 4 chunk = 41.4s | 165.8s / 3 chunk = 55.3s |
-| **e2e 总计** | 321.3s | **267.9s** |
-| 进程退出码 | 1 | **0** |
+| Song duration | 63.68s | 59.96s |
+| ABC score planning | 28.5s (18.5 tok/s, 528 tok) | 24.4s (22.1 tok/s, 540 tok) |
+| Semantic token generation | 111.3s (**14.3 tok/s**, 1593 tok) | 60.7s (**24.7 tok/s**, 1500 tok) |
+| NAR flow matching | 6.36s (32 steps) | 5.94s (32 steps) |
+| VAE audio decoding | 165.6s / 4 chunk = 41.4s | 165.8s / 3 chunk = 55.3s |
+| **e2e total** | 321.3s | **267.9s** |
+| Process exit code | 1 | **0** |
 
-折算：graph 5.05 秒/音频秒，eager 4.47 秒/音频秒 —— **eager 快约 12%**，
-且能干净退出。所以本机默认用 `--backend torch-eager`。
+Normalized: graph 5.05 seconds per second of audio, eager 4.47 seconds per second of audio
+— **eager is about 12% faster**, and it exits cleanly. So the default on this machine is
+`--backend torch-eager`.
 
-### 为什么 CUDA graph 在长序列上反而更慢
+### Why CUDA graph is actually slower on long sequences
 
-`GraphAR` 的 `capacity = max(len(prefix)) + max_tokens`，而掩码 SDPA 分支
-**每一步都对整个 capacity 算注意力**。上游 flash 路径之所以没这个问题，是靠
-`seqused_k` 告诉 FA 真实有效长度——**而 ROCm 拒绝的正是这个参数**。
-所以：
+`GraphAR` sets `capacity = max(len(prefix)) + max_tokens`, and the masked SDPA branch
+**computes attention over the whole capacity at every step**. The upstream flash path
+escapes this because it uses `seqused_k` to tell FA the real effective length — **and that
+is exactly the argument ROCm rejects**. Hence:
 
-- 短序列（max_tokens=600，capacity≈1030）：graph 46.3 tok/s vs eager 25.0 → graph 快 1.85×
-- 长序列（max_tokens=9000，capacity≈9669）：graph 14.3 tok/s vs eager 24.7 → graph 慢 42%
+- Short sequences (max_tokens=600, capacity≈1030): graph 46.3 tok/s vs eager 25.0 → graph is 1.85× faster
+- Long sequences (max_tokens=9000, capacity≈9669): graph 14.3 tok/s vs eager 24.7 → graph is 42% slower
 
-结论：**graph 只在小 capacity 时划算**；生产参数下 eager 更优。
+Conclusion: **graph only pays off at small capacity**; under production parameters eager
+wins.
 
-### 一个容易误判的坑：第一次 VAE 解码会特别慢
+### An easy pitfall to misread: the first VAE decode is especially slow
 
-首次运行 VAE 解码耗时 139.3s（2 chunk，69.7s/chunk），之后同样工作是
-41–55s/chunk。这不是后端差异，而是 **MIOpen 首次为卷积 solver 付的一次性
-调优开销**（之后落盘缓存）。排坑时不要把首跑的慢当成配置问题。
+The first VAE decode run took 139.3s (2 chunk, 69.7s/chunk), whereas the same work later
+takes 41–55s/chunk. This is not a backend difference but **MIOpen paying its one-off
+tuning cost for convolution solvers on first use** (cached to disk afterwards). While
+debugging, do not mistake a slow first run for a configuration problem.
 
-日志里反复出现的 `MIOpen(HIP): Warning [IsEnoughWorkspace] Solver <GemmFwdRest>,
-workspace required: 1816543232, provided ptr: 0x0000000000000000 size: 0` 是
-solver 选型/workspace 相关的良性告警，实测不影响结果，可用 `MIOPEN_FIND_MODE`
-进一步调优。
+The `MIOpen(HIP): Warning [IsEnoughWorkspace] Solver <GemmFwdRest>, workspace required:
+1816543232, provided ptr: 0x0000000000000000 size: 0` line that keeps appearing in the logs
+is a benign solver-selection/workspace warning; measurements show it does not affect the
+results, and it can be tuned further with `MIOPEN_FIND_MODE`.
 
-### 退出码 1 说明
+### About exit code 1
 
-`--backend torch` 时进程在**所有产物已写出并完成哈希校验之后**、解释器拆卸阶段
-崩溃，返回 1。`result.json` 的 `status` 仍为 `complete`、`audio.flac` 完整可播，
-所以是纯收尾问题，不是推理失败。`torch-eager` 无此问题。
-控制实验确认基础 torch / bf16 matmul / SDPA / CUDA graph 单独跑都 `exit 0`，
-只有该路径组合会触发。
+With `--backend torch` the process crashes during interpreter teardown — **after every
+artifact has been written out and hash-verified** — and returns 1. `result.json` still has
+`status` set to `complete` and `audio.flac` is complete and playable, so this is purely a
+shutdown issue, not an inference failure. `torch-eager` shows no such problem. Controlled
+experiments confirmed that plain torch / bf16 matmul / SDPA / CUDA graph each run on their
+own with `exit 0`; only this combination of paths triggers it.
 
-## 语言支持：单权重双语（中文无需额外模型）
+## Language support: one set of weights, two languages (no extra model for Chinese)
 
-YuE2-3B 的模型卡 frontmatter 就是 `language: [zh, en]`——**一个权重同时支持中英文**。
+The YuE2-3B model card frontmatter is simply `language: [zh, en]` — **a single set of
+weights supports both Chinese and English**.
 
-⚠️ **不要照搬 YuE v1 的经验**：v1 确实分了 en / zh / jp-kr 专用权重
-（`YuE-s1-7B-anneal-zh-cot` 等），但 **YuE2 只发布了 `m-a-p/YuE2-3B` 一个权重，
-没有语言分支**。本机已下载的这份就是全量的，不需要再下任何中文模型。
+⚠️ **Do not carry over the YuE v1 experience**: v1 really did ship language-specific
+weights (en / zh / jp-kr, e.g. `YuE-s1-7B-anneal-zh-cot`), but **YuE2 published only one
+set of weights, `m-a-p/YuE2-3B`, with no language branches**. The copy already downloaded
+on this machine is the complete set, and no Chinese model needs to be fetched.
 
-语言通过 `style` 字段的标签声明，没有单独的语言参数：
+Language is declared through tags in the `style` field; there is no separate language
+parameter:
 
 ```json
 {"style": "Mandarin, warm piano, acoustic pop, female vocal, 84 BPM", "lyrics": "..."}
 ```
 
-旁证：
-- 官方 CLI 的内置默认请求本身就是中文歌（`src/yue2/cli.py:108`，
-  style 为 `"Mandarin, warm piano, acoustic pop, female vocal"`）。
-- 分词器对 CJK 有独立字表：实测中文 7 字 → 6 token（≈1 token/字），
-  token ID 落在 99xxx–119xxx 区间；日文韩文同样有独立区间（12xxxx）。
-  而英文 25 字符才 6 token。
-- 模型卡 demo 含 `Mandarin funk / nu-disco` 条目，官方 agentic demo 也是
-  "from Mandarin pop to English jazz"。
+Corroborating evidence:
+- The official CLI's own built-in default request is a Chinese song (`src/yue2/cli.py:108`,
+  with a `style` of `"Mandarin, warm piano, acoustic pop, female vocal"`).
+- The tokenizer has a dedicated table for CJK: measured, 7 Chinese characters → 6 tokens
+  (≈1 token per character), with token IDs landing in the 99xxx–119xxx range; Japanese and
+  Korean likewise have their own range (12xxxx). English, by contrast, needs 25 characters
+  to reach 6 tokens.
+- The model card demo includes a `Mandarin funk / nu-disco` entry, and the official agentic
+  demo is likewise "from Mandarin pop to English jazz".
 
-## 优化空间（实测）
+## Room for optimization (measured)
 
-### VAE 解码分块大小：512 已是最优档
+### VAE decode chunk size: 512 is already the sweet spot
 
-同一段 1499 帧（60s 音频）latent，只跑 decode：
+The same 1499-frame (60s of audio) latent, running decode only:
 
-| tiles | core_frames | 解码耗时 | 峰值显存 | RMS |
+| tiles | core_frames | Decode time | Peak VRAM | RMS |
 |---:|---:|---:|---:|---:|
 | 12 | 128 | 104.0s | 1.27 GB | 0.0942 |
 | 6 | 256 | 161.6s | 1.88 GB | 0.0942 |
 | **3** | **512** | **101.6s** | 3.11 GB | 0.0942 |
 | 2 | 1024 | 230.9s | 5.50 GB | 0.0942 |
-| 1 | full（不分块） | 285.0s | 7.70 GB | 0.0942 |
+| 1 | full (no chunking) | 285.0s | 7.70 GB | 0.0942 |
 
-五者 RMS 完全一致，说明只是速度差异、不影响音质。
+All five RMS values are identical, so this is purely a speed difference with no effect on
+audio quality.
 
-**注意上游默认值对这张卡是慢的**：`vae_core_frames` 在
-`memory_budget_gib > 12` 时取 **1024**（为 24 GB 卡选的），在本机比 512 慢 2.3×。
-本目录的 `yue2_run.py` 已固定 512。
+**Note that the upstream default is slow on this card**: `vae_core_frames` becomes **1024**
+when `memory_budget_gib > 12` (a value chosen for 24 GB cards), which on this machine is
+2.3× slower than 512. The `yue2_run.py` in this directory pins it to 512.
 
-非单调（256 比 128 和 512 都差）说明主导因素是 **MIOpen 按张量形状挑 solver**，
-而不是干净的 O(T²) 关系。所以换块大小是在赌 solver 选择，512 已在好档位，不必再调。
-如需进一步压榨，可试 `MIOPEN_FIND_MODE=3` + `MIOPEN_FIND_ENFORCE=3`
-（ComfyUI 里的"調優模式"，首跑慢、之后走缓存）。
+The non-monotonic behavior (256 is worse than both 128 and 512) shows that the dominant
+factor is **MIOpen picking solvers by tensor shape**, not a clean O(T²) relationship. So
+changing the chunk size is a gamble on solver selection; 512 is already a good slot and
+needs no more tuning. If you want to squeeze further, try `MIOPEN_FIND_MODE=3` +
+`MIOPEN_FIND_ENFORCE=3` (ComfyUI's "Tuning mode"; slow on the first run, cache-backed
+afterwards).
 
-### FP8 量化：门槛会通过，但结果是错的，绝对不要开
+### FP8 quantization: the gate passes, but the results are wrong — never enable it
 
-`quantization.py` 的门槛是 `torch.cuda.get_device_capability(device) >= (8, 9)`，
-而本机报 **(12, 0)** ⇒ **门槛通过**，`torch._scaled_mm` 也存在，看起来一切正常。
+The gate in `quantization.py` is `torch.cuda.get_device_capability(device) >= (8, 9)`, and
+this machine reports **(12, 0)** ⇒ **the gate passes**, and `torch._scaled_mm` exists too,
+so everything looks normal.
 
-但实测（四种形状，含真实的 2048 hidden / 184704 vocab）：
+But measured (four shapes, including the real 2048 hidden / 184704 vocab):
 
-| 形状 | vs 反量化参考 |
+| Shape | vs dequantized reference |
 |---|---:|
 | M=16 K=2048 N=512 | 99.99863 |
 | M=16 K=2048 N=2048 | 109.82619 |
-| M=1 K=2048 N=184704（lm_head） | 116.88484 |
-| M=1500 K=2048 N=2048（prefill） | 89.68730 |
+| M=1 K=2048 N=184704 (lm_head) | 116.88484 |
+| M=1500 K=2048 N=2048 (prefill) | 89.68730 |
 
-对比基准是**反量化后的权重**，也就是把 FP8 量化误差排除掉、只检验 `_scaled_mm`
-算得对不对。相对误差约 90–117 意味着输出量级完全不对——**不是精度损失，是计算错误**。
-所以在 ROCm 上开 `quantization="fp8"` 会**静默产出垃圾音频**。
+The reference is the **dequantized weights**, which rules out FP8 quantization error and
+tests only whether `_scaled_mm` computes correctly. A relative error of roughly 90–117
+means the output magnitude is entirely wrong — **this is not precision loss, it is a
+computational error**. So enabling `quantization="fp8"` on ROCm **silently produces
+garbage audio**.
 
-（首次探测曾误报，原因是我把权重写成了 `wt.t().contiguous().t()`——双重转置等于
-`wt`，于是拿 `a @ w` 去对 `a @ w.t()`，误差自然荒谬。修正后才确认上面这个结论。）
+(The first probe gave a false reading because I had written the weights as
+`wt.t().contiguous().t()` — a double transpose equals `wt`, so I was comparing `a @ w`
+against `a @ w.t()` and the errors were naturally absurd. The conclusion above was only
+confirmed after that was fixed.)
 
-### 环境细节：MIOpen 需要写权限
+### Environment detail: MIOpen needs write permission
 
-MIOpen 会把 conv solver 调优结果写进 SQLite 库。如果进程没有写该目录的权限，会直接失败：
+MIOpen writes its conv solver tuning results into a SQLite database. If the process lacks
+write permission for that directory, it fails outright:
 
 ```
 MIOpen Error: sqlite_db.cpp:224: Internal error while accessing SQLite database:
@@ -228,54 +257,69 @@ unable to open database file
 RuntimeError: miopenStatusInternalError
 ```
 
-正常运行（普通用户权限跑 `run_yue2.bat`）不会遇到；但任何受限沙箱/只读环境下跑
-YuE2 都会撞上，特征就是 conv1d 抛 `miopenStatusInternalError`。
+Normal operation (running `run_yue2.bat` with ordinary user permissions) never hits this;
+but running YuE2 in any restricted sandbox or read-only environment will — the signature is
+conv1d throwing `miopenStatusInternalError`.
 
 
 
-## 出歌速度实测（Patch 2 前后对照）
+## Measured generation speed (Patch 2 before/after)
 
-同一请求（`zh_song.json`，seed 20260917，产出 174.919 s 音频）：
+The same request (`zh_song.json`, seed 20260917, producing 174.919 s of audio):
 
-| 运行 | wall | VAE 解码 | vae_frames |
+| Run | wall | VAE decode | vae_frames |
 |---|---:|---:|---|
-| T8 Patch 2 之前 | 613.7 s | 313.0 s | 1024 |
-| T8 Patch 2 之后 | **393.4 s** | **107.0 s** | **512** |
-| 官方 CLI 直跑 | 423.4 s | 155.8 s | 512 |
+| T8 before Patch 2 | 613.7 s | 313.0 s | 1024 |
+| T8 after Patch 2 | **393.4 s** | **107.0 s** | **512** |
+| Official CLI run directly | 423.4 s | 155.8 s | 512 |
 
-**−220.3 s（−35.9%）**，差距几乎全在 VAE 分块 → 诊断成立。折算 3.51 → 2.25 s/音频秒。
+**−220.3 s (−35.9%)**, and the gap lies almost entirely in VAE chunking → the diagnosis
+holds. Normalized: 3.51 → 2.25 s per second of audio.
 
-⚠️ **跨天比较有系统性漂移**：同是 512 分块，早期 VAE 155.8 s、本次 107.0 s
-（最可能是 MIOpen solver 调优缓存落盘）。所以同日同会话的 A/B 才可靠，
-与历史数字比较留 ~15% 余量。这也再次印证「首次 VAE 解码异常慢」那条。
+⚠️ **Cross-day comparisons drift systematically**: with identical 512 chunking, the earlier
+VAE decode took 155.8 s and this one 107.0 s (most likely MIOpen's solver tuning cache
+being persisted to disk on first run). So only same-day, same-session A/B runs are
+reliable, and when comparing against historical numbers leave ~15% of headroom. This also
+re-confirms the "first VAE decode is abnormally slow" item.
 
-## 补丁脚本的两条纪律（血泪）
+## Two rules for patch scripts (learned the hard way)
 
-**1. 必须保留原文件换行符。** 早期版本用 Python `Path.write_text()` 写回，
-Windows 上会把 `\n` 翻译成 `\r\n` —— 一个 2 行修复变成整文件 diff（git 里满屏变化）。
-实测：`transcribe_worker.py` 从 4836 B 涨到 4957 B（+121 = 15 B 文案 + 106 个多余 CR）。
-统一改用 `open(..., newline="")` 读写后，回放产出与实测 kit **逐字节一致**（7 文件 SHA256 相同）。
+**1. The original file's line endings must be preserved.** Early versions wrote back with
+Python's `Path.write_text()`, which on Windows translates `\n` into `\r\n` — turning a
+2-line fix into a whole-file diff (a screenful of changes in git).
+Measured: `transcribe_worker.py` grew from 4836 B to 4957 B (+121 = 15 B of new text + 106
+extra CRs). After switching uniformly to `open(..., newline="")` for reading and writing,
+replayed output is **byte-for-byte identical** to the measured kit (identical SHA256 for
+7 files).
 
-**2. 同一文件多锚点时，幂等标记要选"全部改完才出现"的特征串。**
-在 `vendor/seed-vc/inference.py` 上踩过：先用补丁 A 的注释做标记，后来新增补丁 B 时
-脚本认为"已打过"而整体跳过 → B 漏打。换成用 B 的特征串做标记后正常。
+**2. With multiple anchors in one file, the idempotency marker must be a signature string
+that only appears once everything has been changed.**
+This bit us in `vendor/seed-vc/inference.py`: the marker was initially patch A's comment,
+so when patch B was added later the script decided the file was "already patched" and
+skipped it wholesale → B was never applied. Switching to a marker built from B's signature
+string fixed it.
 
-## .bat 文件闪退（双击即退）—— ASCII 铁律
+## .bat files flash-closing (quit on double-click) — the ASCII iron rule
 
-**现象**：双击 un_yue2.bat / start_rocm.bat 窗口瞬间关闭或报错刷屏后退出。
+**Symptom**: double-clicking run_yue2.bat / start_rocm.bat closes the window instantly, or
+it exits after a screenful of errors.
 
-**根因**：bat 是 **UTF-8 保存且含中文**。cmd 按当前代码页逐行切分批处理，
-chcp 65001 虽在第 2 行生效，但 cmd 的行读取对多字节字符**错位**，会把一行
-从中间切成两行 —— REM ...kernels... 被切成 REM + kernels...，后者被当命令执行：
+**Root cause**: the bat file is **saved as UTF-8 and contains Chinese**. cmd slices the
+batch file line by line using the current code page; although chcp 65001 takes effect on
+line 2, cmd's line reader **misaligns** on multibyte characters and splits a line down the
+middle — REM ...kernels... is split into REM + kernels..., and the latter is executed as a
+command:
 `
 'kernels' is not recognized as an internal or external command
-'IMENTAL' is not recognized ...        ← EXPERIMENTAL 被切断
-'目录>' / '义歌词' is not recognized   ← UTF-8 中文被切坏
+'IMENTAL' is not recognized ...        ← EXPERIMENTAL was cut in half
+'目录>' / '义歌词' is not recognized   ← UTF-8 Chinese got mangled ('目录' = "directory", '义歌词' = leftover fragment of "semantic lyrics")
 `
 
-**铁律：.bat 文件里只放 ASCII。** 中文提示移到 Python 里输出（Python 处理 UTF-8 没问题）。
-两个启动器已重写为纯 ASCII（un_yue2.bat、start_rocm.bat），部署前用
-(文件字节中 >127 的数量) == 0 校验。
+**Iron rule: put nothing but ASCII in .bat files.** Move Chinese messages into Python
+output (Python handles UTF-8 fine). Both launchers have been rewritten as pure ASCII
+(run_yue2.bat, start_rocm.bat); before deploying, validate with (number of bytes >127 in
+the file) == 0.
 
-**另一个相关坑**：Windows 会锁定**正在运行的 .bat 文件**——双击后停在 pause 的窗口
-会让该文件无法覆盖（Copy-Item: Access denied）。先关掉那个窗口/结束 cmd 进程再部署。
+**Another related pitfall**: Windows locks **a .bat file that is running** — a window
+sitting at pause after a double-click makes that file impossible to overwrite (Copy-Item:
+Access denied). Close that window or kill the cmd process before deploying.

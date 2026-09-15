@@ -1,86 +1,86 @@
 # ComfyUI YuE2 T8
 
-[中文](#中文说明) · [English](#english) · [模型仓库 / Model weights](https://huggingface.co/t8star/YuE2-Comfy) · [ComfyUI Registry](https://registry.comfy.org/nodes/yue2-t8)
+[Chinese](#chinese) · [English](#english) · [Model weights](https://huggingface.co/t8star/YuE2-Comfy) · [ComfyUI Registry](https://registry.comfy.org/nodes/yue2-t8)
 
 ![YuE2 Music T8](icon.svg)
 
-## 完整版整合包
+## Complete Portable Package
 
-完整版整合包：[夸克网盘下载](https://pan.quark.cn/s/67ebf18a2d51)
+Complete portable package: [Quark Drive download](https://pan.quark.cn/s/67ebf18a2d51)
 
-Windows / NVIDIA 完整包，包含运行环境与模型。完整解压后，双击 `YuE2-T8.exe` 即可启动。
+A complete Windows / NVIDIA package containing both the runtime and the models. Extract it fully, then double-click `YuE2-T8.exe` to start.
 
-[GitHub Release](https://github.com/T8mars/Comfyui-YuE2-T8/releases/tag/v1.3.0) 仅提供代码与自动更新附件，不包含 Python 或模型。完整整合包从上方夸克网盘获取；模型和可选 GGUF 权重也可通过下方网盘单独下载。旧版升级涉及统一运行环境迁移时，更新器会按需另外下载依赖。
+The [GitHub Release](https://github.com/T8mars/Comfyui-YuE2-T8/releases/tag/v1.3.0) provides only the code and the auto-update assets; it contains neither Python nor the models. Get the complete portable package from the Quark Drive link above; the models and the optional GGUF weights can also be downloaded separately from the cloud-drive link below. When an upgrade from an older version involves migrating to the unified runtime, the updater downloads the extra dependencies on demand.
 
-## 模型网盘
+## Model Downloads
 
-模型网盘：[夸克网盘下载](https://pan.quark.cn/s/6c40eac8af6c)
+Model downloads: [Quark Drive download](https://pan.quark.cn/s/6c40eac8af6c)
 
-模型放置方式见下方“模型放置路径”。
+See "Model Locations" below for how to place the models.
 
 
-## 本地 LLM 模型（可选）
+## Local LLM Model (Optional)
 
-本地 LLM 模型：[夸克网盘下载](https://pan.quark.cn/s/55eab3bb2d9b)。
+Local LLM model: [Quark Drive download](https://pan.quark.cn/s/55eab3bb2d9b).
 
-用于独立 WebUI 的“AI 创作助手”生成歌词、曲风和可选 ABC。使用 API 无需下载。使用本地模式时，解压模型，在助手设置中填写存放 GGUF 的目录（例如 `E:\LLM`），保存后选择模型并测试连接；目录留空则使用模型根目录下的 `LLM` 文件夹。该下载独立于音乐模型包，不是运行 YuE2 的必选项。
+The standalone WebUI's "AI Creation Assistant" uses it to generate lyrics, style, and optional ABC. No download is needed when you use an API. In local mode, extract the model, enter the directory that holds the GGUF files in the assistant settings (for example `E:\LLM`), save, then select a model and test the connection; if you leave the directory empty, the `LLM` folder under the model root is used instead. This download is separate from the music model package and is not required in order to run YuE2.
 
-## 中文说明
+## Chinese
 
-YuE2 Music T8 把 YuE2-3B 完整歌曲生成接入 ComfyUI，并提供一个可单独使用的本地 WebUI。节点通过 `127.0.0.1:8189` 调用隔离的推理 worker，不会替换或污染 ComfyUI 自带的 Torch 环境。1.1.0 新增 Seed-VC + Demucs 零样本参考音色翻唱；1.1.1 新增 Windows EXE 启动器；1.1.2 可在端口被另一套空闲 YuE2 占用时自动安全切换；1.1.3 修复独立整合包缺少 YuE2 推理源码的问题并提供页面日志；1.1.4 新增模型目录设置和无模型 GitHub Release 更新清单。
+YuE2 Music T8 brings YuE2-3B full-song generation into ComfyUI and ships a standalone local WebUI. The nodes call an isolated inference worker on `127.0.0.1:8189`, so they neither replace nor contaminate ComfyUI's own Torch environment. Version 1.1.0 added zero-shot reference-voice covers with Seed-VC + Demucs; 1.1.1 added the Windows EXE launcher; 1.1.2 switches safely and automatically when the port is already owned by another idle YuE2 installation; 1.1.3 fixed the missing YuE2 inference sources in the standalone package and added in-page logs; and 1.1.4 added the model directory setting and a code-only GitHub Release update manifest.
 
-主要功能：
+Highlights:
 
-- 中文、英文歌词生成 48kHz 双声道歌曲；支持 `full`、`melody`、`off` 三种规划模式。
-- 生成并保存 ABC 旋律/和弦计划，可精确恢复原始计划，也可编辑或导入 ABC 后重新生成。
-- 一次生成 1–8 个连续种子候选；完整歌曲工件保留请求、配置、tokens、latents 与完整性清单，后续候选失败时仍保留已完成结果。
-- 使用 SheetSage2 + MERT 把 WAV、FLAC、MP3、M4A、OGG、AAC 转为 ABC/MIDI，并生成翻唱。
-- 输入 1–30 秒参考干声，把新生成歌曲的人声转换为参考音色，再与 Demucs 分离的伴奏混合为 48 kHz 双声道 FLAC。
-- 共享单 GPU 队列、任务中心、逐项取消、任务历史与导出；任务中心会区分当前任务和完整等待列表，并显示来源、阶段、风格摘要与排队顺序。
-- 自动清理过期或超出容量的任务、上传和日志；`exports` 中的重要成品永久保留，服务重启时会把中断任务明确标为失败。
+- Generate 48 kHz stereo songs from Chinese or English lyrics, with `full`, `melody`, and `off` planning modes.
+- Generate and save ABC melody/chord plans that can be restored exactly, or edited or imported and then rendered again.
+- Generate 1–8 consecutive-seed candidates in one run; a complete song artifact keeps the request, configuration, tokens, latents, and an integrity manifest, and finished results survive a later candidate failure.
+- Transcribe WAV, FLAC, MP3, M4A, OGG, and AAC to ABC/MIDI with SheetSage2 + MERT, and generate covers from the result.
+- Take a 1–30 second dry reference vocal, convert the vocal of a newly generated song to that timbre, and remix it with the Demucs-separated accompaniment into a 48 kHz stereo FLAC.
+- A shared single-GPU queue, task center, per-item cancellation, task history, and export; the task center separates the current task from the complete waiting list and shows source, stage, style summary, and queue position.
+- Automatic cleanup of expired or over-quota jobs, uploads, and logs; important results in `exports` are kept indefinitely, and interrupted jobs are explicitly marked as failed when the service restarts.
 
-### v1.3.0：统一运行环境与 RVC 训练工作台
+### v1.3.0: Unified Runtime and RVC Training Workbench
 
-- 所有本地功能共用 Python 3.12.10 / Torch 2.10.0 + CUDA 12.8，逐阶段子进程运行。
-- “我的音色 / 训练”：导入素材、试听筛选、分离伴奏、训练、取消/续训、建索引、音色库预览与导入导出。没有 RVC 模型的用户可直接在页面训练。
-- 翻唱页可直接转换已有歌曲，也可先由 YuE2 重制再转换；选择 Seed-VC、RVC 或同曲对比。对比共用分轨缓存，完成后当前页和历史页都保留可试听结果。
-- RVC 显示所选音色的训练音域统计，并提供独立半音与八度选择、关闭检索对照。默认保留原调；低八度会改变演唱音高，对比模式下不影响 Seed-VC 的音高设置。
-- 训练项目/缓存、素材和用户音色库可指定目录并校验迁移；原数据保留备份。更新器支持旧多环境迁移和失败回滚。
+- Every local feature shares Python 3.12.10 / Torch 2.10.0 + CUDA 12.8 and runs stage by stage in subprocesses.
+- "My Voices / Training": import material, preview and screen it, separate the accompaniment, train, cancel/resume, build indexes, and preview or import/export the voice library. Users who have no RVC model can train directly from the page.
+- The cover page can convert an existing song directly, or remake it with YuE2 first and then convert it; choose Seed-VC, RVC, or a same-song comparison. The comparison shares the separation cache, and once it finishes both the current page and the history page keep a playable result.
+- RVC shows the register statistics of the selected voice's training data and offers independent semitone and octave controls plus a retrieval-disabled comparison. The original key is kept by default; lowering the octave changes the sung pitch, and in comparison mode it does not affect the Seed-VC pitch setting.
+- Training projects/caches, datasets, and the user voice library can be pointed at custom directories and migrated with verification; the original data is kept as a backup. The updater supports migration from legacy multi-environment installs and rolls back on failure.
 
-RVC 的训练和换声已做实际验证；少数样本不能证明所有音色效果，不能承诺 RVC 一定优于 Seed-VC。公开素材的对比指标和人工盲听状态见发布附件 [RVC_EVALUATION.md](https://github.com/T8mars/Comfyui-YuE2-T8/releases/download/v1.3.0/RVC_EVALUATION.md)。完整包附带已编译并验证的可选 FlashAttention 轮子；当前歌曲推理未接入独立 `flash_attn`，无需安装，也不宣称整曲提速。
+RVC training and voice conversion have been validated on real hardware; a handful of samples cannot demonstrate behaviour across every voice, and no claim is made that RVC always beats Seed-VC. Comparative metrics on public material and the status of human blind listening are in the release asset [RVC_EVALUATION.md](https://github.com/T8mars/Comfyui-YuE2-T8/releases/download/v1.3.0/RVC_EVALUATION.md). The complete package ships optional FlashAttention wheels that are prebuilt and verified; current song inference does not use standalone `flash_attn`, so installing them is unnecessary and no whole-song speedup is claimed.
 
-### AI 创作助手（独立 WebUI）
+### AI Creation Assistant (Standalone WebUI)
 
-“AI 创作助手”通过贞贞平价小屋、贞贞的 AI 工坊、OpenAI 兼容接口或本地 GGUF 生成歌词、曲风和可选 ABC。结果可编辑、保存和下载，再选择字段发送到“创作”“乐谱计划”或“旋律重制 / 参考音色”。发送只填入草稿，生成音频由目标页按钮启动；该功能不增加 ComfyUI 节点。
+The "AI Creation Assistant" generates lyrics, style, and optional ABC through ZhenZhen Affordable AI Shop, ZhenZhen AI Workshop, any OpenAI-compatible endpoint, or a local GGUF model. Results can be edited, saved, and downloaded, and individual fields can then be sent to "Create", "Score Plan", or "Melody Remake / Reference Voice". Sending only fills in a draft — audio generation still starts from the button on the target page — and the feature adds no ComfyUI nodes.
 
-默认先生成歌词和曲风，ABC 交给 YuE2 规划；需要 LLM 作谱时再选自动创作 ABC。未通过校验的谱面不能直接发送，失败保留已完成文本，支持只重试失败步骤。草稿保存在 `userdata/assistant`，升级时需要保留该目录。
+By default the assistant writes the lyrics and style first and leaves ABC planning to YuE2; select automatic ABC creation when you want the LLM to write the score. A score that fails validation cannot be sent directly, a failure keeps the text already produced, and only the failed step can be retried. Drafts are stored in `userdata/assistant`, which must be preserved across upgrades.
 
-API 密钥默认仅在本次服务会话有效，也可选择使用 Windows 当前用户加密保存。本地模型放在模型根目录的 `LLM` 下，或指定其他目录。v1.3.0 的音乐生成、转谱、Seed-VC、RVC 训练/推理和 GGUF 助手全部使用同一个 `runtime/python.exe`（Python 3.12.10），按任务启动子进程释放模型；没有第二套 Python。完整包已包含 GGUF 后端，`安装本地LLM.bat` 仅用于修复这一共享环境中的组件，不下载 GGUF 权重。模型加载成功不代表其乐谱生成质量通过验证。使用步骤见 [用户指南](USER_GUIDE.md#ai-创作助手)。
+API keys are valid only for the current service session by default, and can optionally be saved encrypted for the current Windows user. Local models go under `LLM` in the model root, or in a directory you specify. In v1.3.0 music generation, transcription, Seed-VC, RVC training/inference, and the GGUF assistant all use the same `runtime/python.exe` (Python 3.12.10) and start a subprocess per task to release the model; there is no second Python. The complete package already includes the GGUF backend, and `install_local_llm.bat` only repairs components in this shared environment — it does not download GGUF weights. A model that loads successfully has not necessarily passed score-generation quality validation. See the [user guide](USER_GUIDE.md#ai-creation-assistant) for the steps.
 
-渠道会自动填入参考节点使用的默认模型：贞贞平价小屋为 `bytedance/doubao-seed-evolving`，贞贞的 AI 工坊为 `gemini-3.5-flash`。模型框支持预置下拉、手动模型 ID，以及从标准 OpenAI `/models` 接口获取账号可用的模型 LIST；接口不支持 LIST 时仍可手填。API Key 获取：[贞贞平价小屋](https://api.seedance.nz/sign-up?aff=5f4w) · [贞贞的 AI 工坊](https://ai.t8star.org/register?aff=dP7j)。
+The channel automatically fills in the default model used by the reference nodes: `bytedance/doubao-seed-evolving` for ZhenZhen Affordable AI Shop and `gemini-3.5-flash` for ZhenZhen AI Workshop. The model field supports preset dropdowns, manual model IDs, and a LIST of the models available to the account fetched from a standard OpenAI `/models` endpoint; if the endpoint does not support LIST you can still enter an ID by hand. Getting an API key: [ZhenZhen Affordable AI Shop](https://api.seedance.nz/sign-up?aff=5f4w) · [ZhenZhen AI Workshop](https://ai.t8star.org/register?aff=dP7j).
 
-### 安装
+### Installation
 
-Registry 版本审核通过后，可通过 ComfyUI Registry/Manager 安装：
+Once the Registry version has passed review, you can install it through the ComfyUI Registry/Manager:
 
 ```bash
 comfy node install yue2-t8
 ```
 
-也可以手动安装：
+Or install it manually:
 
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/T8mars/Comfyui-YuE2-T8.git
 ```
 
-安装节点后，进入节点目录并运行一次 `install_runtime.bat`。脚本会下载模型、统一 Python 3.12.10 运行时与 RVC 底模、CUDA 12.8 Torch、FFmpeg 和离线乐谱渲染组件。完成后重启 ComfyUI。
+After installing the node, enter the node directory and run `install_runtime.bat` once. The script downloads the models, the unified Python 3.12.10 runtime and the RVC base model, CUDA 12.8 Torch, FFmpeg, and the offline score-rendering components. Restart ComfyUI when it finishes.
 
-要求：Windows 10/11、NVIDIA GPU、建议 24GB 显存、建议至少 60GB 可用磁盘空间用于安装、下载与迁移（训练素材、检查点和作品另计）。正常生成、转谱和参考音色转换均使用离线模式。
+Requirements: Windows 10/11 and an NVIDIA GPU; 24 GB of VRAM and at least 60 GB of free disk space are recommended for installation, downloads, and migration (training material, checkpoints, and outputs are extra). Normal generation, transcription, and reference-voice conversion all run offline.
 
-### 模型放置路径
+### Model Locations
 
-模型统一发布在 [t8star/YuE2-Comfy](https://huggingface.co/t8star/YuE2-Comfy)。安装脚本固定使用已验证的模型提交 [`a083f1064`](https://huggingface.co/t8star/YuE2-Comfy/commit/a083f106499daead99259dd0c443a5494254cfc5)。默认放到当前节点目录的 `models` 下；也可以在 WebUI 顶部展开“模型位置与安装说明”填写其他硬盘的绝对路径，或者双击 `configure_models.bat` 后再安装。当前路径保存在 `settings.json`。
+All models are published in [t8star/YuE2-Comfy](https://huggingface.co/t8star/YuE2-Comfy). The installation script pins the verified model commit [`a083f1064`](https://huggingface.co/t8star/YuE2-Comfy/commit/a083f106499daead99259dd0c443a5494254cfc5). By default they are placed under `models` in the current node directory; alternatively, expand "Model location and install notes" at the top of the WebUI to enter an absolute path on another drive, or double-click `configure_models.bat` before installing. The current path is stored in `settings.json`.
 
 ```text
 ComfyUI/custom_nodes/yue2-t8/models/YuE2-3B/model.safetensors
@@ -94,50 +94,50 @@ ComfyUI/custom_nodes/yue2-t8/models/RVC/
 ComfyUI/custom_nodes/yue2-t8/models/VOICE_MODEL_MANIFEST.json
 ```
 
-手动 Git clone 时，把上面的 `yue2-t8` 换成实际仓库目录名 `Comfyui-YuE2-T8`。不要把权重直接放入 ComfyUI 的 `checkpoints` 目录；代码需要保留七个模型子目录、配置文件及两个清单。
+When you clone the repository manually, replace `yue2-t8` above with the actual repository directory name, `Comfyui-YuE2-T8`. Do not put the weights directly into ComfyUI's `checkpoints` directory; the code expects all seven model subdirectories, their configuration files, and two manifests.
 
-如果使用自定义目录，该目录本身就是上面路径中的 `models`：七个子目录和 `MODEL_MANIFEST.json`、`VOICE_MODEL_MANIFEST.json` 必须直接位于其中。命令行安装也可使用：
+If you use a custom directory, that directory is itself the `models` segment of the paths above: the seven subdirectories together with `MODEL_MANIFEST.json` and `VOICE_MODEL_MANIFEST.json` must sit directly inside it. Command-line installation is also supported:
 
 ```powershell
 .\install_runtime.bat -ModelsDirectory "D:\AI\YuE2-models"
 ```
 
-### 更新
+### Updating
 
-从 v1.2.2 开始，本地 WebUI 首页右上方的运行状态卡提供“检查更新”按钮，页面打开时也会自动检查稳定版。发现新版后点击“更新到 vX”，程序会从 [最新版本清单](https://github.com/T8mars/Comfyui-YuE2-T8/releases/latest/download/update-manifest.json) 下载代码包、验证来源与 SHA256、备份旧代码、安装并重启当前端口。更新保留模型、本地 GGUF、作品、上传、导出、日志、缓存、助手草稿和设置。首次升级到 v1.3.0 会准备并校验统一运行时，补齐 RVC 底模，旧服务退出后再切换代码与 Python；新版服务通过启动检查才清理旧运行时。失败时恢复旧代码与原运行时。运行或排队任务存在时不会开始更新。
+Since v1.2.2 the run-status card in the top right of the local WebUI home page offers a "Check for updates" button, and the stable channel is also checked automatically when the page opens. When a new version is found, click "Update to vX" and the program downloads the code archive from the [latest version manifest](https://github.com/T8mars/Comfyui-YuE2-T8/releases/latest/download/update-manifest.json), verifies its origin and SHA256, backs up the old code, then installs and restarts on the current port. Updates preserve the models, local GGUF files, outputs, uploads, exports, logs, caches, assistant drafts, and settings. The first upgrade to v1.3.0 prepares and verifies the unified runtime and fetches the RVC base model; the old service exits before the code and Python are switched, and the old runtime is removed only after the new service passes its startup checks. On failure the old code and the original runtime are restored. An update never starts while a job is running or queued.
 
-GitHub 的 `*-code.zip` 是自动更新用代码包，不含模型和 Python；完整版包含统一运行时与基础模型，GGUF 权重另选。v1.2.2 起可用页面更新器。更早版本建议把新版完整版解压到新目录，设置已有模型路径后启动，保留原安装目录和作品。
+GitHub's `*-code.zip` is the code archive used by automatic updates and contains neither models nor Python; the complete version includes the unified runtime and the base models, with GGUF weights downloaded separately. The in-page updater is available from v1.2.2 onward. On earlier versions, extract the new complete package into a new directory, point it at your existing model path, and start it, leaving the original installation directory and your outputs in place.
 
-不要只把 v1.3.0 代码覆盖到旧版多 Python 整合包：新版需要统一环境迁移。请使用页面更新器，或在新目录安装完整版。首次升级需联网下载缺失组件并留出新旧环境并存的临时空间；已通过校验的模型会复用。
+Do not simply copy the v1.3.0 code over an older multi-Python portable package: the new version requires a unified-environment migration. Use the in-page updater, or install the complete package into a new directory. The first upgrade needs network access to download the missing components and enough temporary space for the old and new environments to coexist; models that have already been verified are reused.
 
-1.1.5 修复 Windows 长曲声学合成的显存峰值，默认按查询分块并卸载闲置 AR 权重；参考音色翻唱改为后台持久任务，支持阶段保存和恢复。完成后当前页面直接显示播放器、时长及下载按钮，刷新或切换页面后仍保留最近作品。详见 [验证记录](VALIDATION.md)。
+1.1.5 reduces the VRAM peak of acoustic synthesis for long songs on Windows by tiling by query by default and offloading idle AR weights; reference-voice covers became persistent background jobs with staged save and resume. When they finish, the current page shows a player, the duration, and a download button, and the most recent result survives a refresh or a page switch. See [validation records](VALIDATION.md) for details.
 
-### 使用
+### Usage
 
-节点位于 `YuE2 音乐` 分类。`workflows` 目录提供歌词创作、先计划再渲染、外部 ABC 重生成和参考音色翻唱四个前端工作流。Windows 整合包可双击 `YuE2-T8.exe` 启动；节点源码包可双击 `start_webui.bat`。启动窗口会保留并显示服务地址或失败原因。若 8189 已由另一套空闲 YuE2 占用，启动器会校验进程后自动切换；有运行或排队任务时不会中断。`stop_service.bat` 用于手动停止后台服务。
+The nodes live under the `YuE2 Music` category. The `workflows` directory provides four front-end workflows: lyrics to song, plan then render, external ABC re-render, and reference voice cover. The Windows portable package starts by double-clicking `YuE2-T8.exe`; the node source package starts by double-clicking `start_webui.bat`. The launcher window stays open and shows either the service address or the reason it failed. If port 8189 is already owned by another idle YuE2 installation, the launcher verifies the process and switches automatically; it will not interrupt a running or queued job. Use `stop_service.bat` to stop the background service manually.
 
-参考音色翻唱需要 1–30 秒清晰单人干声，推荐 5–25 秒、无伴奏、少混响。工作流先生成或接收歌曲，再分离歌声/伴奏、转换音色并重新混音。请只使用本人声音或已经取得明确授权的声音。
+Reference-voice covers need a clean 1–30 second solo dry vocal, ideally 5–25 seconds, without accompaniment and with little reverb. The workflow generates or accepts a song, then separates vocals from accompaniment, converts the timbre, and remixes. Only use your own voice, or a voice for which you have explicit permission.
 
-首次使用建议先运行“YuE2 模型服务”节点或 WebUI 右上角的自检。所有输出保存在节点目录下的 `outputs/jobs`，导出结果保存在 `exports`。失败任务可在 WebUI“任务与版本”页直接展开日志，或打开节点目录下的 `logs`；页面会显示 worker 的具体异常，不再只报告退出码。
+For a first run, start with the "YuE2 Model Service" node or the self-check in the top right of the WebUI. All outputs are saved under `outputs/jobs` in the node directory, and exported results go to `exports`. For a failed job you can expand the log directly on the WebUI's "Tasks & Versions" page, or open the `logs` directory in the node directory; the page now shows the worker's actual exception instead of only an exit code.
 
-存储策略首次启动时写入节点目录的 `retention.json`：完成任务默认保留 30 天、最多 100 个且总计不超过 100 GiB；上传保留 7 天且不超过 10 GiB；普通日志保留 30 天且不超过 2 GiB。服务每 6 小时自动执行，也可在 WebUI“任务与版本”页手动执行。把需要长期保存的结果导出到 `exports`；自动策略不会删除该目录。
+The storage policy is written to `retention.json` in the node directory on first start: completed jobs are kept for 30 days by default, up to 100 of them and no more than 100 GiB in total; uploads are kept for 7 days and no more than 10 GiB; ordinary logs are kept for 30 days and no more than 2 GiB. The service runs this automatically every 6 hours, and you can also run it manually on the WebUI's "Tasks & Versions" page. Export anything you need to keep long term to `exports`; the automatic policy never deletes that directory.
 
-### 节点
+### Nodes
 
-| 节点 | 功能 |
+| Node | Function |
 | --- | --- |
-| YuE2 模型服务 | 检查运行时、模型与共享服务 |
-| YuE2 生成歌曲 | 歌词、风格、ABC 到完整音频 |
-| YuE2 生成乐谱计划 | 只生成可编辑 ABC 计划 |
-| YuE2 渲染乐谱计划 | 精确恢复或编辑后重生成 |
-| YuE2 音频转谱 | 音频到 ABC、MIDI、事件与乐谱图 |
-| YuE2 生成翻唱 | 使用核对后的 ABC 与新风格生成 |
-| YuE2 参考音色翻唱 | 使用 Seed-VC + Demucs 转换人声音色并重新混音 |
-| YuE2 生成语义 Tokens | 高级分阶段推理 |
-| YuE2 声学合成 | 语义 tokens 到声学 latent |
-| YuE2 VAE 解码 | latent 到 48kHz 双声道音频 |
-| YuE2 导出工件 | 把完整工件复制到 `exports` |
-| YuE2 卸载/取消 | 查询或取消当前隔离 worker |
+| YuE2 Model Service | Checks the runtime, the models, and the shared service |
+| YuE2 Generate Song | Lyrics, style, and ABC to complete audio |
+| YuE2 Generate Score Plan | Produces an editable ABC plan only |
+| YuE2 Render Score Plan | Restores a plan exactly, or re-renders after editing |
+| YuE2 Transcribe Audio | Audio to ABC, MIDI, events, and a score image |
+| YuE2 Generate Cover | Generates from a checked ABC and a new style |
+| YuE2 Reference Voice Cover | Converts the vocal timbre with Seed-VC + Demucs and remixes |
+| YuE2 Generate Semantic Tokens | Advanced staged inference |
+| YuE2 Acoustic Synthesis | Semantic tokens to acoustic latents |
+| YuE2 VAE Decode | Latents to 48 kHz stereo audio |
+| YuE2 Export Artifacts | Copies complete artifacts to `exports` |
+| YuE2 Unload/Cancel | Queries or cancels the current isolated worker |
 
 ## English
 
@@ -156,8 +156,8 @@ The standalone v1.3.0 studio uses one CPython 3.12.10 runtime for music, transcr
 - Bilibili: https://space.bilibili.com/385085361
 - YouTube: https://www.youtube.com/@T8star-Aix/
 - API: https://api.seedance.nz/sign-up?aff=5f4w
-- 在线 AI 应用 / Online AI apps: https://www.runninghub.ai/zh-cn/user-center/1907375370302308353/userPost?inviteCode=rh-v1121
-- ComfyUI 整合包 / Portable package: https://pan.quark.cn/s/264edb7e36bd
+- Online AI apps: https://www.runninghub.ai/zh-cn/user-center/1907375370302308353/userPost?inviteCode=rh-v1121
+- ComfyUI portable package: https://pan.quark.cn/s/264edb7e36bd
 - Hugging Face: https://huggingface.co/t8star
 - Model repository: https://huggingface.co/t8star/YuE2-Comfy
 - Release validation: [VALIDATION.md](VALIDATION.md)

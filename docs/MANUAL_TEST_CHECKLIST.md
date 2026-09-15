@@ -1,89 +1,90 @@
-# 人工测试清单（你自己在 WebUI / 命令行跑）
+# Manual test checklist (run it yourself in the WebUI or from the command line)
 
-> 启动：双击 `D:\YuE2\T8\start_rocm.bat` → 浏览器 `http://127.0.0.1:8189`
-> （服务已经在跑的话就不要重复启动，会提示「已有一个服务实例在运行」——那是正常的单实例锁）
+> Start: double-click `D:\YuE2\T8\start_rocm.bat` → browser at `http://127.0.0.1:8189`
+> (if the service is already running, don't start it again; it will say "a service instance is already running" — that is the normal single-instance lock)
 
 ---
 
-## A. 出歌（核心，建议先测）
+## A. Song generation (the core feature; test this first)
 
-| # | 测什么 | 怎么测 | 预期 |
+| # | What to test | How to test | Expected |
 |---|---|---|---|
-| A1 | 中文短歌 | WebUI：默认模板直接点「生成完整歌曲」 | 1~2 分钟的歌；播放人声清晰、无杂音 |
-| A2 | **歌长由歌词决定** | 把歌词加到 4 段以上再生成 | 时长明显变长（约 5.7 秒/行） |
-| A3 | 中英文 | `style` 里 `Mandarin` ↔ `English` | 都能唱；语言标签生效 |
-| A4 | **乐谱可编辑**（YuE2 特色） | 生成后复制 `score.abc` 内容改几个音 → 勾「用编辑后的乐谱渲染」→ 再生成 | 按改后的旋律唱 |
-| A5 | 换风格 | style 换成 metal / jazz / 民乐等 | 曲风明显变化 |
-| A6 | 命令行出歌 | `D:\YuE2\run_yue2.bat outputs\test_cli` | 同样能出歌（走官方 CLI，与 WebUI 独立） |
+| A1 | Chinese short song | WebUI: keep the default template and click "Generate Full Song" | A 1–2 minute song; clear vocals on playback, no noise |
+| A2 | **Song length is driven by the lyrics** | Add lyrics until you have 4 or more sections, then generate | Clearly longer (about 5.7 s per line) |
+| A3 | Chinese vs. English | Switch `style` between `Mandarin` ↔ `English` | Both sing; the language tag takes effect |
+| A4 | **Editable score** (a YuE2 specialty) | After generating, copy the contents of `score.abc` and change a few notes → tick "Render with edited score" → generate again | It sings the edited melody |
+| A5 | Style switching | Change style to metal / jazz / Chinese traditional, etc. | The genre clearly changes |
+| A6 | Command-line song generation | `D:\YuE2\run_yue2.bat outputs\test_cli` | Generates a song the same way (goes through the official CLI, independent of the WebUI) |
 
-参考请求：`D:\YuE2\zh_song.json`（中文 2:55）、`D:\YuE2\long_song.json`（英文 2:51）
+Reference requests: `D:\YuE2\zh_song.json` (Chinese, 2:55), `D:\YuE2\long_song.json` (English, 2:51)
 
-## B. 音频转谱 + 乐谱渲染
+## B. Audio-to-score transcription + score rendering
 
-| # | 测什么 | 怎么测 | 预期 |
+| # | What to test | How to test | Expected |
 |---|---|---|---|
-| B1 | 拿生成歌转谱 | WebUI 上传 `D:\YuE2\outputs\zh_demo01\audio.flac` → 转谱 | 得 ABC + **PDF 乐谱** + 钢琴试奏 WAV |
-| B2 | 拿**真人歌曲**转谱（更有说服力） | 任意 30s 内的 mp3 → 转谱 | 提取主旋律；复杂编曲可能不准（melody_only 模式） |
-| B3 | 打开 PDF | 用浏览器/阅读器打开 `score.pdf` | 五线谱正常渲染（playwright+abcjs） |
+| B1 | Transcribe a generated song | In the WebUI, upload `D:\YuE2\outputs\zh_demo01\audio.flac` → transcribe | You get ABC + a **PDF score** + piano playback WAV |
+| B2 | Transcribe a **real recording** (more convincing) | Any mp3 under 30s → transcribe | The main melody is extracted; dense arrangements may be inaccurate (melody_only mode) |
+| B3 | Open the PDF | Open `score.pdf` in a browser/reader | Staff notation renders correctly (playwright+abcjs) |
 
-## C. 参考音色翻唱
+## C. Reference-timbre covers
 
-| # | 测什么 | 怎么测 | 预期 |
+| # | What to test | How to test | Expected |
 |---|---|---|---|
-| C1 | 换音色 | 源 = 一首生成歌；参考 = 5~25s 清晰干声（自己录或用生成歌片段） | 输出 audio.flac：旋律保留、音色换成参考者 |
-| C2 | 参考音质影响 | 用带混响/嘈杂的参考再试一次 | 音色相似度下降（说明参考质量重要） |
-| C3 | diffusion_steps | 默认 30；先用 8 快速看效果，再跑 30 对比 | 步数越多越像 |
+| C1 | Timbre swap | Source = a generated song; reference = 5–25s of clean dry vocals (record your own or use a clip from a generated song) | Output audio.flac: the melody is preserved and the timbre becomes the reference singer's |
+| C2 | Effect of reference quality | Try again with a reverberant/noisy reference | Timbre similarity drops (which shows that reference quality matters) |
+| C3 | diffusion_steps | Default is 30; run 8 first for a quick look, then run 30 to compare | More steps means a closer match |
 
-> C 需要的参考音频：**1~30 秒清晰干声**。可以直接用 `D:\YuE2\outputs\smoke01\audio.flac`（24s）。
+> Reference audio needed for section C: **1–30 seconds of clean dry vocals**. You can use `D:\YuE2\outputs\smoke01\audio.flac` directly (24s).
 
-## D. 边界 / 压力
+## D. Edge cases / stress
 
-| # | 测什么 | 预期 |
+| # | What to test | Expected |
 |---|---|---|
-| D1 | 4 分钟歌（约 40 行歌词） | 能出，约 9 分钟；验证 0.04s/token 规律 |
-| D2 | 连续多次生成 | 显存正常释放（每次作业独立进程） |
-| D3 | 显存占用 | 任务管理器看 GPU 专用显存，峰值约 11~12GB |
+| D1 | A 4-minute song (about 40 lyric lines) | It works, in about 9 minutes; confirms the 0.04s/token rule |
+| D2 | Several generations in a row | VRAM is released properly (each job is its own process) |
+| D3 | VRAM usage | Check GPU dedicated memory in Task Manager; the peak is about 11–12GB |
 
 ---
 
-## 关于「高级设置 → 显存预算」
+## On "Advanced Settings → VRAM budget"
 
-**保持默认 23.5，不要改成 15.5。** 它不是实际占用而是进程上限，且会被自动夹取：
+**Leave it at the default 23.5; don't change it to 15.5.** It is not actual usage but a per-process cap, and it gets clamped automatically:
 
-| 填 | 实际生效上限 |
+| Value entered | Effective cap |
 |---|---|
-| 23.5（默认） | 13.92 GiB（= 实卡 15.92 − 2） |
-| 15.5 | 13.5 GiB ← 反而更低，零收益 |
+| 23.5 (default) | 13.92 GiB (= 15.92 on this card − 2) |
+| 15.5 | 13.5 GiB ← actually lower, zero benefit |
 
-实测峰值只用 11~12 GB。真正决定速度的 `vae_core_frames` 已由 Patch 2 按显存自动设为 512
-（上游默认 1024 在这张卡上慢 2.3×），与这个预算值无关。
+Measured peak usage is only 11–12 GB. The value that really decides speed, `vae_core_frames`, has already
+been set automatically to 512 by Patch 2 based on VRAM (upstream's default of 1024 is 2.3× slower on this
+card), independently of this budget value.
 
 ---
 
-## 已知正常现象（不是 bug）
+## Known-benign behaviors (not bugs)
 
-| 现象 | 原因 |
+| Symptom | Cause |
 |---|---|
-| 首次生成/转谱前有 1~2 分钟"没反应" | MIOpen 一次性 solver 调优 + 模型加载 |
-| 日志里大量 `MIOpen(HIP): Warning ... workspace` | 良性告警，不影响结果 |
-| 出歌用 `--backend torch` 时进程退出码 1 | 收尾阶段崩溃，**产物已完整写出**（result.json 为 complete） |
-| 停止服务后再启动报「已有一个实例在运行」 | 单实例锁；先跑 `stop_service.bat` 或结束 python 进程 |
-| 转谱慢于预期 | SheetSage2+MERT 加载约 10s + 编码；音频越长越慢 |
-| 音色转换整体偏慢 | 已关闭 MIOpen（见移植报告 §3 Patch 5），conv 走 PyTorch 原生实现 |
+| The first generation/transcription looks unresponsive for 1–2 minutes | One-off MIOpen solver tuning + model loading |
+| Lots of `MIOpen(HIP): Warning ... workspace` lines in the log | Benign warnings that don't affect results |
+| Exit code 1 when generating with `--backend torch` | A crash during teardown, but **the artifacts are already fully written** (result.json says complete) |
+| Starting again after stopping the service reports "an instance is already running" | Single-instance lock; run `stop_service.bat` first, or end the python process |
+| Transcription is slower than expected | SheetSage2+MERT take about 10s to load, plus encoding; longer audio is slower |
+| Voice conversion is slow overall | MIOpen is disabled (see the port report §3 Patch 5), so conv uses native PyTorch implementations |
 
-## 出问题时
+## When things go wrong
 
-1. 日志：`D:\YuE2\T8\logs\<作业id>.log`（WebUI 的作业详情里也有入口）
-2. 服务日志：`D:\YuE2\T8\logs\service.stderr.log`
-3. 技术细节：`D:\YuE2\PROGRESS.md`、`D:\YuE2\DEPLOY_NOTES.md`、`D:\YuE2\_probe_scripts\README_ROCM_PORT.md`
-4. **别开 `quantization=fp8`**（会静默产出垃圾音频）；**别动 `runtime\` 里的三个 Python 目录**
+1. Logs: `D:\YuE2\T8\logs\<job id>.log` (also reachable from the job details in the WebUI)
+2. Service logs: `D:\YuE2\T8\logs\service.stderr.log`
+3. Technical details: `D:\YuE2\PROGRESS.md`, `D:\YuE2\DEPLOY_NOTES.md`, `D:\YuE2\_probe_scripts\README_ROCM_PORT.md`
+4. **Don't enable `quantization=fp8`** (it silently produces garbage audio); **don't touch the three Python directories under `runtime\`**
 
 ---
 
-## 测完请记录（用于发布素材与文档校准）
+## Record these after testing (for release material and doc calibration)
 
-- [ ] 每首歌的耗时与听感（1~5 分）
-- [ ] 中文咬字是否清楚（这决定要不要在视频里提"中文效果"）
-- [ ] 转谱准确度（真人歌曲 vs 生成歌曲）
-- [ ] 音色转换的相似度（同源参考 vs 不同人参考）
-- [ ] 实际显存峰值
+- [ ] Time and listening impression for each song (1–5 score)
+- [ ] Whether the Chinese diction is clear (this decides whether to bring up "Chinese-language results" in the video)
+- [ ] Transcription accuracy (real recordings vs. generated songs)
+- [ ] Voice-conversion similarity (same-source reference vs. a different speaker's reference)
+- [ ] Actual peak VRAM

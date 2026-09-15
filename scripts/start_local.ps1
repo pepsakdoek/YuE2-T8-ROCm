@@ -1,4 +1,4 @@
-﻿param([switch]$NoBrowser, [ValidateRange(1024,65535)][int]$Port = 8189, [switch]$NoSwitch)
+param([switch]$NoBrowser, [ValidateRange(1024,65535)][int]$Port = 8189, [switch]$NoSwitch)
 $ErrorActionPreference = 'Stop'
 $KitRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ServiceUrl = "http://127.0.0.1:$Port"
@@ -10,7 +10,7 @@ trap {
 }
 Write-Host '[YuE2] 正在检查运行环境...' -ForegroundColor Cyan
 $Python = Join-Path $KitRoot 'runtime\python.exe'
-if (-not (Test-Path -LiteralPath $Python)) { throw '尚未安装运行环境，请先双击 安装运行环境.bat。' }
+if (-not (Test-Path -LiteralPath $Python)) { throw '尚未安装运行环境，请先双击 install_environment.bat。' }
 $env:YUE2_HOME = $KitRoot
 $env:YUE2_KIT = $KitRoot
 $env:PYTHONUTF8 = '1'
@@ -64,7 +64,7 @@ if ($Health -and $Health.ok -eq $true) {
         Write-Host '[YuE2] 已切换，正在启动当前整合包。' -ForegroundColor Green
     } else {
         if ([string]$Health.version -ne $ExpectedVersion) {
-            throw "后台服务版本为 $($Health.version)，当前整合包版本为 $ExpectedVersion。请先运行 停止本地服务.ps1 后重试。"
+            throw "后台服务版本为 $($Health.version)，当前整合包版本为 $ExpectedVersion。请先运行 stop_local_service.ps1 后重试。"
         }
         $Running = $true
         Write-Host "[YuE2] 后台服务已在运行，版本 $ExpectedVersion。" -ForegroundColor Green

@@ -1,45 +1,45 @@
-# YuE2 Music T8 · AMD Radeon (ROCm) 移植指南
+# YuE2 Music T8 · AMD Radeon (ROCm) Porting Guide
 
-> 把本地工作室跑在 **AMD Radeon / Windows 原生 ROCm** 上的完整记录与脚本。
-> 实测环境：**Radeon RX 9070 XT 16GB（gfx1201 / RDNA4）· Windows 11 build 26200 ·
-> 原生 Windows ROCm（无 CUDA、无 Triton、无 flash-attn）**。
-> 四项能力（出歌 / 音频转谱 / 乐谱渲染 / 参考音色）**全部实测产出真实产物**，
-> 不是只看 capability 标志。
+> The complete record and scripts for running the local studio on **AMD Radeon / native Windows ROCm**.
+> Tested on: **Radeon RX 9070 XT 16GB (gfx1201 / RDNA4) · Windows 11 build 26200 ·
+> native Windows ROCm (no CUDA, no Triton, no flash-attn)**.
+> All four capabilities (song generation / audio-to-score / score rendering / reference timbre) **produced real artifacts in testing**,
+> not merely a pass on the capability flags.
 
-本目录同时提供 `scripts/rocm/` 下的脚本，所以这份指南不只是一份报告 —— 可以照着复现。
+This directory also ships the scripts under `scripts/rocm/`, so this is a guide you can reproduce from — not just a report.
 
 ---
 
 ## 0. TL;DR
 
-| | NVIDIA（现有安装路径） | AMD（本文） |
+| | NVIDIA (existing install path) | AMD (this document) |
 |---|---|---|
-| PyTorch 来源 | `download.pytorch.org/whl/cu128` | `rocm.nightlies.amd.com/v2/gfx120X-all/`（AMD TheRock） |
-| 运行时布局 | `runtime/python.exe` | **完全相同**，不新增布局 |
-| 源码改动 | — | **3 处**（见 §3，纯设备无关的健壮性修复） |
-| 站点包改动 | — | **1 处**（`descript-audiotools`，见 §3.2） |
-| 出歌 | ✅ | ✅ 175 s 音频 / 393.4 s |
-| 音频转谱（SheetSage2 + MERT） | ✅ | ✅ 24 s 音频 / 36 s |
-| 乐谱渲染（playwright + abcjs） | ✅ | ✅ 产出 PDF + 钢琴试奏 WAV |
-| 参考音色（Seed-VC + Demucs） | ✅ | ✅ 47 s，产出 `audio.flac`，RTF 0.79 |
+| PyTorch source | `download.pytorch.org/whl/cu128` | `rocm.nightlies.amd.com/v2/gfx120X-all/` (AMD TheRock) |
+| Runtime layout | `runtime/python.exe` | **Identical**, no new layout |
+| Source changes | — | **3 places** (see §3, purely device-agnostic robustness fixes) |
+| Site-packages changes | — | **1** (`descript-audiotools`, see §3.2) |
+| Song generation | ✅ | ✅ 175 s audio / 393.4 s |
+| Audio-to-score (SheetSage2 + MERT) | ✅ | ✅ 24 s audio / 36 s |
+| Score rendering (playwright + abcjs) | ✅ | ✅ produces PDF + piano playback WAV |
+| Reference timbre (Seed-VC + Demucs) | ✅ | ✅ 47 s, produces `audio.flac`, RTF 0.79 |
 
-**核心结论**：出歌路径上唯一"长得像 CUDA"的代码是两行自检 ——
+**Key finding**: the only code on the song-generation path that "looks like CUDA" is a two-line self-check —
 
 ```python
 if not torch.cuda.is_available(): raise ...
 if not torch.cuda.is_bf16_supported(): raise ...
 ```
 
-ROCm 下 `torch.cuda` 就是 **HIP 别名**，两者都返回 True（gfx1201 原生支持 BF16）。
-真正 NVIDIA-only 的只有**安装脚本里的轮子索引**。模型权重与 t8 的 pin
-**逐位一致**（YuE2-3B `1d55c42c…a59e9`、YuE2-Vae `807ce9d5…7751346`；
-从 `m-a-p` / `mrfakename` 下载的字节相同），所以 t8 自带的 SHA 清单校验原样通过。
+Under ROCm, `torch.cuda` is simply an **alias for HIP**, and both calls return True (gfx1201 supports BF16 natively).
+The only genuinely NVIDIA-only piece is the **wheel index in the install script**. The model weights are
+**bit-for-bit identical** to t8's pins (YuE2-3B `1d55c42c…a59e9`, YuE2-Vae `807ce9d5…7751346`; the bytes
+downloaded from `m-a-p` / `mrfakename` match), so t8's built-in SHA manifest check passes unchanged.
 
 ---
 
-## 1. 为什么这条路能走通
+## 1. Why this port is feasible
 
-t8 的作业链路是**每个作业起独立 worker 进程**，各角色互不污染：
+t8's job pipeline **spawns a separate worker process per job**, so the roles never contaminate each other:
 
 ```
 service (runtime/python.exe)
@@ -49,51 +49,52 @@ service (runtime/python.exe)
   └── kind=reference_cover           → workflow_worker
 ```
 
-决定移植形状的几个事实：
+A handful of facts shaped this port:
 
-- **没有任何 sm_XX / compute-capability / NVML 检查**，只有上面那两行 `torch.cuda` 自检；
-- `vendor/yue2/` 与 `vendor/seed-vc/` 两个模型栈**互相零引用**，音色转换是独立后处理
-  （出歌 → Demucs 分离 → Seed-VC 换音色 → 重混）；
-- `MODEL_MANIFEST.json` / `VOICE_MODEL_MANIFEST.json` 自带 path/size/sha256，
-  校验脚本只认清单 —— 权重逐位一致即可，与设备无关。
+- **There are no sm_XX / compute-capability / NVML checks anywhere**, only the two `torch.cuda` self-checks above;
+- the two model stacks, `vendor/yue2/` and `vendor/seed-vc/`, **reference each other zero times**; voice conversion
+  is a separate post-processing step (song generation → Demucs separation → Seed-VC timbre swap → remix);
+- `MODEL_MANIFEST.json` / `VOICE_MODEL_MANIFEST.json` carry their own path/size/sha256, and the verification
+  scripts trust the manifest alone — bit-identical weights are all that matters, regardless of device.
 
-> 有一处**版本现实**要说明：文档与 `scripts/rocm/` 的脚本最初是针对 t8 **v1.2.2**
-> （当时是 `runtime/core`、`runtime/transcribe`、`runtime/voice` 三套运行时）开发的，
-> 现在上游已统一成 `runtime/python.exe` 单运行时。**§3 的三处源码改动与版本无关**
-> （已确认在 `main` 上锚点逐字命中），`scripts/rocm/setup_rocm_runtime.ps1` 已改写为
-> 单运行时布局。三运行时时期的完整实测数据见 §4 / §5。
+> One **version caveat** is worth stating: this document and the scripts under `scripts/rocm/` were originally
+> written against t8 **v1.2.2** (which had three runtimes: `runtime/core`, `runtime/transcribe`,
+> `runtime/voice`), whereas upstream has since unified them into the single `runtime/python.exe` runtime.
+> **The three source changes in §3 are version-independent** (their anchors were confirmed to match verbatim
+> on `main`), and `scripts/rocm/setup_rocm_runtime.ps1` has been rewritten for the single-runtime layout.
+> Full measurements from the three-runtime era are in §4 / §5.
 
 ---
 
-## 2. 安装（单运行时布局）
+## 2. Installation (single-runtime layout)
 
-前置：AMD 驱动 + Windows 11；磁盘约 45 GB；网络能访问 `hf-mirror.com` 与
-`rocm.nightlies.amd.com`（`python.org` 在部分网络不可达，脚本带镜像回退）。
+Prerequisites: AMD driver + Windows 11; about 45 GB of disk; network access to `hf-mirror.com` and
+`rocm.nightlies.amd.com` (`python.org` is unreachable on some networks, so the scripts fall back to mirrors).
 
 ```powershell
-# 1) 取代码（不要用上游的 cu128 安装器）
+# 1) Fetch the code (do not use upstream's cu128 installer)
 git clone --depth 1 https://github.com/T8mars/Comfyui-YuE2-T8.git YuE2-T8
 cd YuE2-T8
 
-# 2) 建 ROCm 运行时（对应上游 scripts/setup.ps1 的位置）
+# 2) Build the ROCm runtime (this replaces upstream's scripts/setup.ps1)
 powershell -ExecutionPolicy Bypass -File scripts\rocm\setup_rocm_runtime.ps1
 
-# 3) 应用补丁（已合并的部分会自动 SKIP，可重复运行）
+# 3) Apply the patches (already-merged hunks are skipped automatically; safe to re-run)
 python scripts\rocm\apply_rocm_port.py .
 
-# 4) 模型（可选：网络到 huggingface.co 不通时走镜像直连）
+# 4) Models (optional: download straight from the mirror when huggingface.co is unreachable)
 python scripts\rocm\fetch_mirror_models.py
 runtime\python.exe scripts\verify_models.py --root .
 runtime\python.exe scripts\verify_voice_models.py --root .
 
-# 5) 启动
-启动本地整合包.bat      # 或 runtime\python.exe -X utf8 -m app.yue2_app.service --host 127.0.0.1 --port 8189
+# 5) Start
+start_local_studio.bat      # or runtime\python.exe -X utf8 -m app.yue2_app.service --host 127.0.0.1 --port 8189
 
-# 6) 功能验证（doctor + 转谱渲染 + 音色转换）
+# 6) Capability verification (doctor + transcription/rendering + voice conversion)
 python scripts\rocm\verify_capabilities.py
 ```
 
-启动前建议设置的环境变量（`start_rocm.bat` 里已经写好）：
+Environment variables worth setting before starting (`start_rocm.bat` already sets them):
 
 ```bat
 set TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
@@ -107,62 +108,65 @@ set YUE2_KIT=%~dp0
 
 ---
 
-## 3. 全部改动
+## 3. Every change made
 
-### 3.1 源码（3 处，PR-A / PR-B 已提交）
+### 3.1 Source code (3 places; PR-A / PR-B already submitted)
 
-| # | 文件 | 现象 → 根因 | 修法 |
+| # | File | Symptom → root cause | Fix |
 |---|---|---|---|
-| 1 | `vendor/yue2/cuda_graph.py` | 解码第一步 `RuntimeError: [ROCm] mha_varlen_fwd: seqused_k must be nullopt`。后端探测**只看 ATen schema**，而 schema 是跨后端共享的；ROCm 下 `device.type == "cuda"` 为真且 `_flash_attention_forward` 确实声明了 `seqused_k`，于是误选 flash | HIP 构建上强制走掩码 SDPA。**不能**改传 `seqused_k=None` —— 变长 FA 会去注意未使用的未来 cache 槽位，算出错误结果。实测与 eager **数值差 0.0**，且在捕获的 graph 内 replay 正常 |
-| 2 | `vendor/seed-vc/inference.py` | CAMPPlus / RMVPE 是 `load_models()` 里**仅剩的 fp32 模型**（其它都跟随 `args.fp16`）。fp32 batchnorm 触发 MIOpen 经 HIPRTC **运行时编译** `MIOpenBatchNormFwdInferSpatial`，而 TheRock wheel 不带 libc++ 头 → `fatal error: 'type_traits' file not found` → `miopenStatusUnknownError`，Seed-VC 一个音符都出不来 | 两者都跟随 `fp16`，并把 kaldi fbank 特征转成对应 dtype |
-| 3 | `app/yue2_app/voice_worker.py` | 同类 JIT 失败在别的 fp32 kernel 上复发（spatial BN、RMVPE 里的 GRU）—— 逐个打地鼠不如绕开 | 该 worker 关闭 MIOpen（ROCm PyTorch 里 `torch.backends.cudnn` **就是** MIOpen），conv/BN/RNN 走 PyTorch 原生实现，无需 JIT。**仅在 `torch.version.hip` 非空时生效，CUDA 用户保持 cuDNN**；出歌（core_worker）不受影响，继续用 MIOpen 跑重度 GEMM |
-| 4 | `app/yue2_app/core_worker.py` | VAE 分块大小由 budget 单值推导（`>12GiB → 1024`），隐含 24 GB 卡假设；16 GB 卡上 1024 帧命中慢得多的卷积 solver | 按实卡显存自适应（`<20GiB → 512`），请求仍可显式覆盖 `vae_core_frames` |
+| 1 | `vendor/yue2/cuda_graph.py` | On the first decode step: `RuntimeError: [ROCm] mha_varlen_fwd: seqused_k must be nullopt`. Backend detection **looks only at the ATen schema**, and schemas are shared across backends; under ROCm `device.type == "cuda"` is true and `_flash_attention_forward` really does declare `seqused_k`, so flash is selected wrongly | Force masked SDPA on HIP builds. Passing `seqused_k=None` instead is **not** an option — variable-length FA would attend to unused future cache slots and compute wrong results. Measured difference vs. eager: **0.0**, and replay inside the captured graph works correctly |
+| 2 | `vendor/seed-vc/inference.py` | CAMPPlus / RMVPE are the **only remaining fp32 models** in `load_models()` (everything else follows `args.fp16`). fp32 batchnorm makes MIOpen **compile at runtime** through HIPRTC for `MIOpenBatchNormFwdInferSpatial`, and TheRock wheels ship no libc++ headers → `fatal error: 'type_traits' file not found` → `miopenStatusUnknownError`, so Seed-VC cannot produce a single note | Make both follow `fp16`, and cast the kaldi fbank features to the matching dtype |
+| 3 | `app/yue2_app/voice_worker.py` | The same class of JIT failure kept reappearing on other fp32 kernels (spatial BN, the GRU inside RMVPE) — whack-a-mole was worse than routing around it | This worker turns MIOpen off (in ROCm PyTorch, `torch.backends.cudnn` **is** MIOpen), so conv/BN/RNN fall back to native PyTorch implementations that need no JIT. **This only takes effect when `torch.version.hip` is non-empty; CUDA users keep cuDNN**; song generation (core_worker) is unaffected and keeps using MIOpen for its heavy GEMMs |
+| 4 | `app/yue2_app/core_worker.py` | The VAE tile size was derived from the single budget value (`>12GiB → 1024`), which silently assumes a 24 GB card; on a 16 GB card, 1024 frames land on a much slower convolution solver | Adapt to the actual card's VRAM (`<20GiB → 512`); requests can still override `vae_core_frames` explicitly |
 
-### 3.2 站点包（1 处，无法进仓库，故提供脚本）
+### 3.2 Site packages (1 change; cannot go into the repo, so a script is provided)
 
-`descript-audiotools`（由 `demucs → dac` 带入）在 **类体导入时**对 `dist.ReduceOp`
-求值，而 torch ≥ 2.9 的 `torch.distributed` 是惰性模块，未初始化进程组前没有该属性：
+`descript-audiotools` (pulled in by `demucs → dac`) evaluates `dist.ReduceOp` **at class-body import time**,
+but in torch ≥ 2.9 `torch.distributed` is a lazy module that has no such attribute until a process group is
+initialized:
 
 ```
 AttributeError: module 'torch.distributed' has no attribute 'ReduceOp'
   audiotools/ml/decorators.py  op: dist.ReduceOp = dist.ReduceOp.AVG
 ```
 
-Seed-VC 因此完全无法启动。**这是 descript-audiotools 与现代 torch 的不兼容，不是 AMD 问题**
-（NVIDIA 上装 torch ≥ 2.9 同样复现）。本移植在 voice 运行时的站点包里注入哨兵：
+Seed-VC therefore cannot start at all. **This is an incompatibility between descript-audiotools and modern
+torch, not an AMD problem** (it reproduces on NVIDIA with torch ≥ 2.9 just the same). This port injects a
+sentinel into the voice runtime's site-packages:
 
 ```powershell
 python scripts\rocm\patch_audiotools.py runtime\Lib\site-packages
 ```
 
-> 上游更干净的解法可能是换一个兼容版本的 `descript-audiotools`，或在安装脚本里加一步
-> 后置补丁 —— 这个取舍留给维护者。`apply_rocm_port.py` 也会在运行时已安装时顺手处理。
+> A cleaner upstream solution might be to pin a compatible version of `descript-audiotools`, or to add a
+> post-install patch step to the installer — that trade-off is for the maintainers to make.
+> `apply_rocm_port.py` also handles it opportunistically when the runtime is already installed.
 
-### 3.3 t8 自带文件一律未改
+### 3.3 No t8-owned file was modified
 
-除 `core_worker.py` 的 1 处功能改动外，上游既有文件保持原样；ROCm 用户用新脚本
-**并排安装**，便于 rebase 与提 PR。
+Apart from the one functional change in `core_worker.py`, the existing upstream files are untouched; ROCm
+users **install alongside** using the new scripts, which keeps rebasing and upstreaming straightforward.
 
 ---
 
-## 4. 实测结果
+## 4. Measured results
 
-| 验证 | 耗时 | 产物 |
+| Check | Time | Artifact |
 |---|---:|---|
-| 出歌（中文，175 s 音频，seed 20260917） | 393.4 s | `audio.flac` + `score.abc` |
-| 音频转谱（24 s 音频） | 36 s | ABC 310 字符 + MIDI + **PDF** + 钢琴试奏 `piano_mix.wav` |
-| 参考音色（24 s，`diffusion_steps=8`） | 47 s | `audio.flac`（换音色人声 + 伴奏重混），Seed-VC **RTF 0.79** |
-| doctor 自检 | 12 s | GPU / BF16 / 四模型 SHA256 全过 |
+| Song generation (Chinese, 175 s audio, seed 20260917) | 393.4 s | `audio.flac` + `score.abc` |
+| Audio-to-score (24 s audio) | 36 s | 310-character ABC + MIDI + **PDF** + piano playback `piano_mix.wav` |
+| Reference timbre (24 s, `diffusion_steps=8`) | 47 s | `audio.flac` (timbre-swapped vocals + remixed accompaniment), Seed-VC **RTF 0.79** |
+| doctor self-check | 12 s | GPU / BF16 / all four model SHA256s pass |
 
-**一个正确性信号**：同 seed 同歌词，经「官方 CLI 直跑」与「service → worker → vendored
-yue2」两条完全不同的代码路径，产出音频时长**逐位一致**（`174.91866666666667 s`）
-—— 移植未引入行为偏差。
+**One correctness signal**: with the same seed and the same lyrics, two completely different code paths —
+"official CLI run directly" and "service → worker → vendored yue2" — produced audio with a **bit-identical**
+duration (`174.91866666666667 s`), so the port introduced no behavioral drift.
 
-### 4.1 VAE 分块大小（§3.1 #4 的依据）
+### 4.1 VAE tile size (the evidence behind §3.1 #4)
 
-同一段 1499 帧（60 s 音频）latent，只跑 decode：
+The same 1499-frame (60 s audio) latent, decode only:
 
-| tiles | `core_frames` | 解码耗时 | 峰值显存 | RMS |
+| tiles | `core_frames` | Decode time | Peak VRAM | RMS |
 |---:|---:|---:|---:|---:|
 | 12 | 128 | 104.0 s | 1.27 GB | 0.0942 |
 | 6 | 256 | 161.6 s | 1.88 GB | 0.0942 |
@@ -170,94 +174,102 @@ yue2」两条完全不同的代码路径，产出音频时长**逐位一致**（
 | 2 | 1024 | 230.9 s | 5.50 GB | 0.0942 |
 | 1 | full | 285.0 s | 7.70 GB | 0.0942 |
 
-五者 RMS 完全一致 —— 只是速度差异，不影响音质。**耗时对分块大小非单调**
-（256 比 128 和 512 都慢），说明主导因素是 **MIOpen 按张量形状挑 solver**，
-而不是干净的 O(T²) 关系；512 恰好在这个形状的好档位上。
+All five RMS values are identical, so this is purely a speed difference with no effect on audio quality.
+**Time is non-monotonic in tile size** (256 is slower than both 128 and 512), which shows that the dominant
+factor is **MIOpen picking solvers by tensor shape** rather than a clean O(T²) relationship; 512 happens to
+land in a sweet spot for this shape.
 
-端到端（同一请求 `zh_song.json`，seed 20260917，产出 174.919 s 音频）：
+End to end (same request `zh_song.json`, seed 20260917, producing 174.919 s of audio):
 
-| 运行 | wall | VAE 解码 | `vae_core_frames` |
+| Run | wall | VAE decode | `vae_core_frames` |
 |---|---:|---:|---|
-| 改动前 | 613.7 s | 313.0 s | 1024 |
-| 改动后 | **393.4 s** | **107.0 s** | 512 |
-| 收益 | **−220.3 s（−35.9 %）** | −206 s | — |
+| Before | 613.7 s | 313.0 s | 1024 |
+| After | **393.4 s** | **107.0 s** | 512 |
+| Gain | **−220.3 s (−35.9 %)** | −206 s | — |
 
-折算 **3.51 s/音频秒 → 2.25 s/音频秒**；改动后的路线**已快于**当初官方 CLI 直跑
-同请求的 423.4 s。
+That works out to **3.51 s per audio second → 2.25 s per audio second**; the post-change path is **already
+faster than** the original direct official-CLI run of the same request at 423.4 s.
 
-### 4.2 其它性能参考
+### 4.2 Other performance notes
 
-- 出歌速度：每 1 秒音频 ≈ 2.25 s（eager）
-- **歌长 = 0.04 秒/token**（25 token/秒音频），默认 `semantic.max_tokens=9000` → 上限 6 分钟；
-  实际歌长由**歌词段数**决定
-- AR 吞吐：eager 24.7 tok/s；CUDA graph 短序列 46.3 tok/s，长序列降到 14.3 tok/s
-  —— 掩码 SDPA 每步对**整个 capacity** 算注意力（`capacity = max(len(prefix)) + max_tokens`），
-  上游 flash 路径靠 `seqused_k` 规避，而这正是 ROCm 拒绝的参数。所以 **graph 只在小
-  capacity 时划算**，生产参数下用 `--backend torch-eager`
+- Song generation speed: ≈ 2.25 s per 1 s of audio (eager)
+- **Song length = 0.04 s/token** (25 tokens per second of audio); the default `semantic.max_tokens=9000`
+  caps it at 6 minutes. The actual length is decided by the **number of lyric sections**
+- AR throughput: eager 24.7 tok/s; CUDA graph 46.3 tok/s on short sequences, dropping to 14.3 tok/s on long
+  ones — masked SDPA computes attention over the **entire capacity** on every step
+  (`capacity = max(len(prefix)) + max_tokens`), which upstream's flash path sidesteps with `seqused_k`,
+  the very argument ROCm rejects. So **graphs only pay off at small capacity**; under production settings
+  use `--backend torch-eager`
 
-> **测速纪律**：跨天比较有系统性漂移。同是 512 分块，早期 VAE 解码 155.8 s、后一次
-> 107.0 s（最可能是 MIOpen solver 调优缓存随首次运行落盘）。**只有同日同会话的 A/B
-> 才可靠**，与历史数字比较应留 ~15 % 余量。
+> **Benchmarking discipline**: comparisons across days drift systematically. Both of these runs used 512
+> tiles, yet early VAE decode took 155.8 s and a later one 107.0 s (most likely the MIOpen solver tuning
+> cache landing on disk during the first run). **Only same-day, same-session A/B comparisons are reliable**;
+> allow ~15 % of headroom when comparing against historical numbers.
 
 ---
 
-## 5. 常见坑速查（全部实测踩过）
+## 5. Pitfall quick reference (every one of these was hit in testing)
 
-| 坑 | 现象 | 解法 |
+| Pitfall | Symptom | Workaround |
 |---|---|---|
-| `python.org` 不可达 | `curl` 无超时永久挂起 | `--connect-timeout/--max-time` + 镜像回退；或预置归档 |
-| pip 装不了 AMD `rocm` | `Cannot import 'setuptools.build_meta'`（sdist + 嵌入式解释器无 setuptools） | **用 uv** 建隔离构建环境 |
-| pip 静默换 CUDA torch | ROCm torch 装失败后 pip 去 PyPI 拉 cu 版，看起来"成功" | 末尾断言 `torch.version.cuda is None` |
-| torch / torchaudio 配错对 | uv **独立解析**两者，配出 `torch 2.9.0+rocm7.10` × `torchaudio 2.9.0+rocm7.13` 的 ABI 不匹配组合 | 钉**同一个完整构建串**（本移植：`2.11.0+rocm7.13.0a20260416`） |
-| 缺 `hipsparselt` | `Unknown rocm library 'hipsparselt'` | torch 2.9.0（2025-11 构建）需要它，其配对的 rocm 7.10 SDK 与整个 v4 索引都没有；换 2.11.0+rocm7.13 |
-| hub 客户端下不了模型 | `RemoteDisconnected` / `LocalEntryNotFoundError` / 符号链接 `PermissionError` | HTTP 分块续传直连 `hf-mirror.com`（`fetch_mirror_models.py`） |
-| MIOpen 需要写权限 | `miopenStatusInternalError`（SQLite 调优库打不开） | 受限沙箱/只读环境会撞；普通用户权限无碍 |
-| 首次 VAE 解码异常慢 | 首跑 69.7 s/chunk，之后 41–55 s | MIOpen 一次性 solver 调优，**不是配置问题** |
-| `torchaudio.save` 失败 | `TorchCodec is required for save_with_torchcodec`（2.9+ 把 `.save()` 改走 torchcodec，Windows 无 FFmpeg 共享库） | 改用 `soundfile`（本仓库 `vendor/seed-vc/inference.py` 已这么做） |
-| SheetSage2 加载失败 | 缺 `configuration_sheetsage2.py` 等 | `trust_remote_code` 模型要下**全部** `.py`，不能只下 `REQUIRED_FILES` |
-| **`.bat` 里放中文导致闪退** | 双击即退，报 `'IMENTAL' is not recognized` 之类 | cmd 按当前代码页逐行切分，多字节字符会**错位断行**。**`.bat` 只放 ASCII**，中文提示移到 Python 输出 |
+| `python.org` unreachable | `curl` hangs forever with no timeout | `--connect-timeout/--max-time` + mirror fallback; or pre-stage the archive |
+| pip cannot install AMD `rocm` | `Cannot import 'setuptools.build_meta'` (sdist + embedded interpreter without setuptools) | **use uv** to create an isolated build environment |
+| pip silently swaps in CUDA torch | after the ROCm torch install fails, pip pulls the cu build from PyPI and looks like it "succeeded" | assert `torch.version.cuda is None` at the end |
+| torch / torchaudio mismatched | uv **resolves the two independently** and produced the ABI-incompatible pair `torch 2.9.0+rocm7.10` × `torchaudio 2.9.0+rocm7.13` | pin **the same full build string** (this port: `2.11.0+rocm7.13.0a20260416`) |
+| missing `hipsparselt` | `Unknown rocm library 'hipsparselt'` | torch 2.9.0 (the 2025-11 build) needs it, but neither its paired rocm 7.10 SDK nor the entire v4 index has it; switch to 2.11.0+rocm7.13 |
+| hub client cannot download models | `RemoteDisconnected` / `LocalEntryNotFoundError` / symlink `PermissionError` | direct HTTP chunked-resume download from `hf-mirror.com` (`fetch_mirror_models.py`) |
+| MIOpen needs write access | `miopenStatusInternalError` (the SQLite tuning database cannot be opened) | hits in restricted sandboxes / read-only environments; ordinary user permissions are fine |
+| first VAE decode is abnormally slow | 69.7 s/chunk on the first run, then 41–55 s | one-off MIOpen solver tuning, **not a configuration problem** |
+| `torchaudio.save` fails | `TorchCodec is required for save_with_torchcodec` (2.9+ routes `.save()` through torchcodec, and Windows has no FFmpeg shared libraries) | switch to `soundfile` (this repo's `vendor/seed-vc/inference.py` already does) |
+| SheetSage2 fails to load | missing `configuration_sheetsage2.py` and friends | `trust_remote_code` models need **every** `.py` file, not just the ones listed in `REQUIRED_FILES` |
+| **Chinese text in `.bat` files crashes them instantly** | double-clicking exits at once with errors like `'IMENTAL' is not recognized` | cmd splits lines according to the current code page, and multi-byte characters **shift the line breaks**. **Keep `.bat` files ASCII-only** and print any non-ASCII messages from Python instead |
 
 ---
 
-## 6. 已知限制 / 未解项
+## 6. Known limitations / open items
 
-1. **`quantization="fp8"` 绝不可用。** capability 门是 `>= (8, 9)`，本机报 **(12, 0)**
-   ⇒ 门槛通过，`torch._scaled_mm` 也存在，**看起来一切正常**。但实测（含真实形状
-   `M=1 K=2048 N=184704` 的 lm_head）对反量化权重的**相对误差 90–117**：
+1. **`quantization="fp8"` is absolutely unusable.** The capability gate is `>= (8, 9)`, and this machine
+   reports **(12, 0)** ⇒ the gate passes and `torch._scaled_mm` exists, so **everything looks normal**.
+   But measured against dequantized weights (including the real lm_head shape `M=1 K=2048 N=184704`),
+   the **relative error is 90–117**:
 
-   | 形状 | vs 反量化参考 |
+   | Shape | vs. dequantized reference |
    |---|---:|
    | M=16 K=2048 N=512 | 99.99863 |
    | M=16 K=2048 N=2048 | 109.82619 |
-   | M=1 K=2048 N=184704（lm_head） | 116.88484 |
-   | M=1500 K=2048 N=2048（prefill） | 89.68730 |
+   | M=1 K=2048 N=184704 (lm_head) | 116.88484 |
+   | M=1500 K=2048 N=2048 (prefill) | 89.68730 |
 
-   这不是精度损失，是**计算错误** —— 开了会静默产出垃圾音频。建议在
-   `quantization.py` 的能力门里显式排除 HIP 构建。
+   This is not a loss of precision but a **computation error** — enabling it silently produces garbage
+   audio. The recommendation is to explicitly exclude HIP builds in the capability gate inside
+   `quantization.py`.
 
-2. **MIOpen 的 JIT 依赖未根治。** §3.1 #3 只让 voice worker 绕开了它。core 的 GEMM 走
-   预编译 kernel，实测无碍；但若未来 core 路径触发新的 JIT kernel，会以同样方式失败。
-   彻底解法是给 comgr 提供 libc++ 头 —— **注意**：把 LLVM 的 libc++ 头（1721 个文件）
-   平铺进 clang 资源目录 `lib/clang/23/include` **无效**，HIPRTC 的搜索路径不含资源目录。
-   这条弯路记下来避免重复。
+2. **MIOpen's JIT dependency is not resolved at the root.** §3.1 #3 only routes the voice worker around it.
+   core's GEMMs use precompiled kernels and measured fine, but if the core path ever triggers a new JIT
+   kernel it will fail the same way. The thorough fix is to give comgr the libc++ headers — **note**:
+   flattening LLVM's libc++ headers (1721 files) into the clang resource directory `lib/clang/23/include`
+   **does not work**, because HIPRTC's search path does not include the resource directory. Recording this
+   dead end so nobody walks it twice.
 
-3. **上游 pin 的 torch 版本已变。** t8 v1.2.2 pin `torch==2.8.0`；现在的
-   `requirements-unified.lock.txt` 是 `torch==2.10.0+cu128`。§3.2 的
-   `descript-audiotools` 问题在 torch ≥ 2.9 上成立，建议在 NVIDIA 侧也确认一遍
-   （我们只在 ROCm/torch 2.11 上实测过）。
+3. **Upstream's pinned torch version has changed.** t8 v1.2.2 pins `torch==2.8.0`; the current
+   `requirements-unified.lock.txt` has `torch==2.10.0+cu128`. The `descript-audiotools` issue in §3.2 holds
+   for torch ≥ 2.9, so it is worth confirming on the NVIDIA side as well (we only measured it on
+   ROCm/torch 2.11).
 
-4. **NAR 阶段比官方 CLI 路线慢约 16 s**（40.7 s vs 24.7 s），原因未定位，
-   疑与 `nar_query_chunk_size`（t8 传 256）或 `offload_ar` 相关；占总时长 < 5 %，未深究。
+4. **The NAR stage runs about 16 s slower than the official CLI path** (40.7 s vs 24.7 s); the cause is not
+   identified and may be related to `nar_query_chunk_size` (t8 passes 256) or `offload_ar`. That is < 5 % of
+   total runtime, so we did not dig further.
 
-5. **应用内自更新会覆盖手改环境。** 「更新到 vX」会整包重解压，对任何本地改过 kit 的
-   用户（不只是 AMD）都会静默冲掉改动。上游 commit `c91ab46` 已把更新改成 code-only，
-   方向正确；本移植的做法是让它恒返回"已是最新"，升级改为手动（重装新版后重跑
-   `apply_rocm_port.py`）。
+5. **The in-app self-updater overwrites hand-modified environments.** "Update to vX" re-extracts the whole
+   package, silently wiping local changes for anyone who has modified their kit (not just AMD users).
+   Upstream commit `c91ab46` already changed updates to code-only, which is the right direction; this port
+   makes the updater always report "already up to date" and moves upgrading to a manual step (reinstall the
+   new version, then re-run `apply_rocm_port.py`).
 
 ---
 
-## 7. 许可证
+## 7. License
 
-t8 代码见仓库 `LICENSE`；YuE2 权重 **CC BY-NC 4.0（非商用）**；
-SheetSage2 / MERT 见各自 LICENSE；Seed-VC **GPL-3.0**；Demucs MIT。
-本目录的脚本沿用仓库许可。
+t8's code is covered by the repository's `LICENSE`; YuE2 weights are **CC BY-NC 4.0 (non-commercial)**;
+SheetSage2 / MERT have their own LICENSE files; Seed-VC is **GPL-3.0**; Demucs is MIT.
+The scripts in this directory follow the repository license.

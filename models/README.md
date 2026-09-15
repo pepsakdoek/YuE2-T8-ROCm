@@ -1,66 +1,66 @@
-# 模型目录骨架（不含权重）
+# Model directory skeleton (weights not included)
 
-这个仓库**不包含任何模型权重**。这里只有目录结构，用来指明权重应该放在哪里。
-权重由安装器从 `t8star/YuE2-Comfy` 下载（或用下面的镜像脚本），
-再由本仓库自带的清单校验（path + size + sha256）。
+This repository **contains no model weights**. All it holds is the directory structure, which shows where the weights belong.
+The installer downloads the weights from `t8star/YuE2-Comfy` (or use the mirror script below),
+and the manifests shipped with this repository verify them (path + size + sha256).
 
 ```
 models/
-├── Demucs/                                  人声/伴奏分离 (HTDemucs)
-├── MERT-v2-FullSong/                        转谱用的 MERT 编码器
-├── Seed-VC/                                 参考音色（音色克隆）
-│   ├── bigvgan_v2_44khz_128band_512x/      声码器
-│   └── whisper-small/                      语义编码器
-├── SheetSage2/                              音频转 ABC 乐谱
+├── Demucs/                                  vocal/instrumental separation (HTDemucs)
+├── MERT-v2-FullSong/                        MERT encoder used for transcription
+├── Seed-VC/                                 reference timbre (voice cloning)
+│   ├── bigvgan_v2_44khz_128band_512x/      vocoder
+│   └── whisper-small/                      semantic encoder
+├── SheetSage2/                              audio to ABC score
 │   └── render_assets/
 │       └── soundfonts/
-│           └── acoustic_grand_piano-mp3/   乐谱试奏音源
-├── YuE2-3B/                                 主模型（中英双语单权重）
+│           └── acoustic_grand_piano-mp3/   score playback soundfont
+├── YuE2-3B/                                 main model (single bilingual CN/EN weight set)
 │   ├── assets/audio/
 │   └── examples/
-├── YuE2-Vae/                                VAE 音频解码
-├── MODEL_MANIFEST.json                      由下载器写入，供 verify_models.py 校验
-└── VOICE_MODEL_MANIFEST.json                由下载器写入，供 verify_voice_models.py 校验
+├── YuE2-Vae/                                VAE audio decoding
+├── MODEL_MANIFEST.json                      written by the downloader, checked by verify_models.py
+└── VOICE_MODEL_MANIFEST.json                written by the downloader, checked by verify_voice_models.py
 ```
 
-约 12.2 GB。模型权重许可见仓库根的 `MODEL_LICENSE`：
-**YuE2 为 CC BY-NC 4.0（非商用）**，SheetSage2 / MERT 见各自 LICENSE，
-Seed-VC 为 GPL-3.0，Demucs 为 MIT。
+About 12.2 GB in total. For weight licensing see `MODEL_LICENSE` at the repository root:
+**YuE2 is CC BY-NC 4.0 (non-commercial)**; SheetSage2 and MERT have their own LICENSE files;
+Seed-VC is GPL-3.0 and Demucs is MIT.
 
-## 下载
+## Download
 
 ```powershell
-# 上游默认方式
+# upstream default method
 runtime\python.exe -m huggingface_hub.cli.hf download t8star/YuE2-Comfy `
     --revision a083f106499daead99259dd0c443a5494254cfc5 --local-dir models
 
-# huggingface.co 不通时（镜像 + 分块续传）
+# when huggingface.co is unreachable (mirror + chunked resume)
 python scripts\rocm\fetch_mirror_models.py
 ```
 
-## 校验（必须走 t8 自己的清单）
+## Verification (must go through t8's own manifests)
 
 ```powershell
 runtime\python.exe scripts\verify_models.py --root .
 runtime\python.exe scripts\verify_voice_models.py --root .
 ```
 
-## 应当存在的文件
+## Files that should be present
 
-### 出歌 / 转谱（`MODEL_MANIFEST.json`）
+### Song generation / transcription (`MODEL_MANIFEST.json`)
 
-| 组件 | 文件 | 大小 (bytes) | sha256 | 来源 |
+| Component | File | Size (bytes) | sha256 | Source |
 |---|---|---:|---|---|
 | `MERT-v2-FullSong` | `MERT-v2-FullSong/model.safetensors` | 2529812848 | `e6dd2ab187d6dd62b6521cd7d8f932e237acf0c5757745a7232082e28391350d` | `m-a-p/MERT-v2-FullSong` |
 | `SheetSage2` | `SheetSage2/model.safetensors` | 228738564 | `b235f68091a5f5b644000f2b5acb57d1e70432aca2b34ab1b9cf27236e1f4274` | `m-a-p/SheetSage2` |
 | `YuE2-3B` | `YuE2-3B/model.safetensors` | 7261441640 | `1d55c42c1a9875c34f5d736e15078449992b044e807ce2a138e6cf289a1e59e9` | `mrfakename/YuE2-3B` |
 | `YuE2-Vae` | `YuE2-Vae/model.safetensors` | 530512720 | `807ce9d5149fa27c5ad3e6582058469852e908f6c5acc8c8aa338e7ab7751346` | `m-a-p/YuE2-Vae` |
 
-### 参考音色（`VOICE_MODEL_MANIFEST.json`）
+### Reference voice (`VOICE_MODEL_MANIFEST.json`)
 
-**Demucs** —— 来源 `adefossez/HTDemucs`
+**Demucs** — source `adefossez/HTDemucs`
 
-| 文件 | 大小 (bytes) | sha256 |
+| File | Size (bytes) | sha256 |
 |---|---:|---|
 | `Demucs/955717e8.json` | 12087 | `12540373de858920b60002ebfbe17738860dbf2e89df625dc3b7875af2d28491` |
 | `Demucs/955717e8.safetensors` | 84025440 | `d9fa14133cfcc034a6758923bb3a8ca9f8dfd0b582134643bbf83f72c17576dd` |
@@ -68,9 +68,9 @@ runtime\python.exe scripts\verify_voice_models.py --root .
 | `Demucs/README.md` | 647 | `b34c13f1b6c3473bf44978f70b5c62666ee309514d6d50b34cf44827f9a38104` |
 | `Demucs/htdemucs.yaml` | 21 | `239c445d0b14454d541ad8bd9bb271c9e536d267e8a4625208744cbb2e7bb66c` |
 
-**Seed-VC** —— 来源 `https://github.com/Plachtaa/seed-vc`
+**Seed-VC** — source `https://github.com/Plachtaa/seed-vc`
 
-| 文件 | 大小 (bytes) | sha256 |
+| File | Size (bytes) | sha256 |
 |---|---:|---|
 | `Seed-VC/bigvgan_v2_44khz_128band_512x/bigvgan_generator.pt` | 489041291 | `d9fe7ec6bd0b44ed9d66973d5012d8181c1570b01e5c72df51973e241dccd357` |
 | `Seed-VC/bigvgan_v2_44khz_128band_512x/config.json` | 1403 | `65b7f487bfaf15256056a75f6667ef5f640214c981922a111927873705ea4ddb` |
@@ -92,6 +92,6 @@ runtime\python.exe scripts\verify_voice_models.py --root .
 | `Seed-VC/whisper-small/tokenizer_config.json` | 282683 | `2a4c4281cf9f51ac6ccc406fdc711a087afe6530f671fa7b80953edc498275ce` |
 | `Seed-VC/whisper-small/vocab.json` | 835550 | `8f680bba319e01a653d2e8a5dbc17a9157179e0576e6ce74ce0c06356c6e24f9` |
 
-> 清单本身也在这个目录里（由下载器写入），`scripts/verify_models.py` 与
-> `scripts/verify_voice_models.py` 只认清单 —— 所以权重必须与 pin **逐位一致**，
-> 与本仓库在 AMD 上的移植无关。
+> The manifests themselves also live in this directory (written by the downloader), and
+> `scripts/verify_models.py` and `scripts/verify_voice_models.py` accept nothing but the manifests — so
+> the weights must match the pin **bit for bit**, independently of this repository's AMD port.

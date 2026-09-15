@@ -75,7 +75,7 @@ def ensure_service(timeout=30):
     root = find_root()
     python = root / "runtime" / "python.exe"
     if not python.is_file():
-        raise RuntimeError(f"YuE2 运行时未安装，请运行 {root / '安装运行环境.bat'}")
+        raise RuntimeError(f"YuE2 运行时未安装，请运行 {root / 'install_environment.bat'}")
     environment = os.environ.copy()
     environment.update({"YUE2_HOME": str(root), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8",
                         "PLAYWRIGHT_BROWSERS_PATH": str(root / "runtime" / "playwright")})

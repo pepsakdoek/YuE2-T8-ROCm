@@ -74,7 +74,7 @@
 ## 1.1.0 - 2026-09-11
 
 - Add local zero-shot reference-voice covers with Demucs vocal separation, Seed-VC conversion, and 48 kHz stereo remixing.
-- Add the `YuE2 参考音色翻唱` ComfyUI node and a fourth front-end workflow using separate source-song and reference-voice inputs.
+- Add the `YuE2 Reference Voice Cover` ComfyUI node and a fourth front-end workflow using separate source-song and reference-voice inputs.
 - Add an isolated Python 3.11 voice runtime, offline model verification, detailed capability checks, and local-only worker stages.
 - Redesign the WebUI cover page as two integrated choices: melody remake or reference voice, with novice guidance and advanced voice controls.
 - Validate the WebUI layout, a 30-step live service conversion, and a real ComfyUI `/prompt` execution.

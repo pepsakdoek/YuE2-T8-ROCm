@@ -1,18 +1,18 @@
-# legacy: t8 v1.2.2 三运行时时期的原始脚本
+# legacy: original scripts from the t8 v1.2.2 three-runtime era
 
-这些是移植**当时实际使用并实测通过**的脚本，原样保留作为记录。
+These are the scripts the port **actually used and validated at the time**, kept as-is for the record.
 
-它们假设 t8 v1.2.2 的运行时布局 —— `runtime/core`、`runtime/transcribe`、
-`runtime/voice` 三套独立嵌入式解释器。上游此后把三套合并成单个
-`runtime/python.exe`（并且换了模型分发方式），所以**这些脚本不要直接用在当前
-upstream main 上**；当前布局请用上一级目录的脚本：
+They assume the t8 v1.2.2 runtime layout — three separate embedded interpreters under
+`runtime/core`, `runtime/transcribe` and `runtime/voice`. Upstream has since merged all three into a single
+`runtime/python.exe` (and changed how models are distributed), so **do not use these scripts directly
+against the current upstream main**; for the current layout use the scripts one directory up:
 
-| 当前脚本 | 作用 |
+| Current script | Purpose |
 |---|---|
-| `../setup_rocm_runtime.ps1` | 建单运行时 ROCm 环境（对应上游 `setup_unified.ps1`） |
-| `../apply_rocm_port.py` | 幂等应用全部移植补丁 |
-| `../patch_audiotools.py` | 站点包补丁（无法进仓库的那一处） |
-| `../fetch_mirror_models.py` | 镜像分块续传下载模型 |
-| `../verify_capabilities.py` | doctor + 转谱渲染 + 音色转换端到端验证 |
+| `../setup_rocm_runtime.ps1` | Build the single-runtime ROCm environment (upstream equivalent: `setup_unified.ps1`) |
+| `../apply_rocm_port.py` | Apply every port patch idempotently |
+| `../patch_audiotools.py` | Site-packages patch (the one change that cannot live in the repository) |
+| `../fetch_mirror_models.py` | Download models from the mirror with chunked resume |
+| `../verify_capabilities.py` | End-to-end validation: doctor + transcription rendering + voice conversion |
 
-三运行时时期的实测数据见 `../../docs/PORT_REPORT.md`。
+For the measured results from the three-runtime era, see `../../docs/PORT_REPORT.md`.
