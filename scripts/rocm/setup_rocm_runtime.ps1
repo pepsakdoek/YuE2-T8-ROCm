@@ -35,17 +35,44 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File scripts\rocm\setup_rocm_runtime.ps1
 #   ... -Device gfx1100 -TorchVersion 2.11.0+rocm7.13.0a20260416 -Force
+#
+# RDNA2 (RX 6800/6900, gfx1030) has no torch wheels in the v2 tree; AMD only
+# publishes them under v2-staging for that family, so:
+#   powershell -ExecutionPolicy Bypass -File scripts\rocm\setup_rocm_runtime.ps1 `
+#       -Device gfx103X-dgpu `
+#       -TorchVersion '2.11.0+rocm7.13.0a20260421' `
+#       -TorchAudioVersion '2.11.0a0+rocm7.13.0a20260421' `
+#       -FamilyIndex 'https://rocm.nightlies.amd.com/v2-staging/gfx103X-dgpu/' `
+#       -RocmExtra 'libraries,devel' -RocmFromFamilyIndex
 param(
     [string]$Device = 'gfx1201',
     [string]$TorchVersion = '2.11.0+rocm7.13.0a20260416',
+    # torchaudio's build string is not always identical to torch's (RDNA2 ships
+    # torch 2.11.0+... against torchaudio 2.11.0a0+...), so it is separable.
+    [string]$TorchAudioVersion = '',
     [string]$PythonVersion = '3.12.10',
     [string]$RocmIndex = 'https://rocm.nightlies.amd.com',
+    # Family wheel index for torch/torchaudio. Defaults to the RDNA4 index this
+    # kit was validated on. RDNA2 (gfx103X) only publishes torch under the
+    # v2-staging tree, so pass e.g.
+    #   -FamilyIndex https://rocm.nightlies.amd.com/v2-staging/gfx103X-dgpu/
+    [string]$FamilyIndex = '',
+    # rocm[...] extras to install. The v2 indexes publish no
+    # rocm-sdk-device-<isa> package, so those need -RocmExtra libraries,devel.
+    [string]$RocmExtra = '',
+    # Take the rocm runtime libraries from -FamilyIndex as well, instead of the
+    # v4/whl tree plus a device-<isa> extra.
+    [switch]$RocmFromFamilyIndex,
     [switch]$SkipPlaywright,
     [switch]$SkipRequirements,
     [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $TorchAudioVersion) { $TorchAudioVersion = $TorchVersion }
+if (-not $FamilyIndex) { $FamilyIndex = "$RocmIndex/v2/gfx120X-all/" }
+if (-not $RocmExtra) { $RocmExtra = "libraries,device-$Device" }
 
 # The embeddable interpreter honours user site-packages via its `import site`,
 # which would silently pull packages from %APPDATA%\Python. Keep it hermetic.
@@ -73,7 +100,9 @@ function Get-FirstReachable([string[]]$Urls, [string]$Destination) {
     if (Test-Path -LiteralPath $Destination) { return }
     foreach ($url in $Urls) {
         Write-Host "  trying $(([uri]$url).Host)"
-        & curl.exe -L --fail --connect-timeout 10 --max-time 300 --retry 1 -o "$Destination.partial" $url 2>$null
+        # -sS keeps curl's progress meter (stderr) out of the log while still
+        # reporting real errors.
+        & curl.exe -sS -L --fail --connect-timeout 10 --max-time 300 --retry 1 -o "$Destination.partial" $url 2>$null
         if ($LASTEXITCODE -eq 0 -and (Test-Path "$Destination.partial") -and
             (Get-Item "$Destination.partial").Length -gt 1MB) {
             Move-Item "$Destination.partial" $Destination -Force
@@ -128,8 +157,12 @@ function Invoke-Uv([string[]]$UvArgs) {
 }
 
 # ------------------------------------------------- 3. ROCm runtime libraries
-Step "ROCm runtime libraries ($Device) -- AMD TheRock"
-Invoke-Uv @('--extra-index-url', "$RocmIndex/v4/whl/", '--pre', "rocm[libraries,device-$Device]")
+Step "ROCm runtime libraries ($RocmExtra) -- AMD TheRock"
+if ($RocmFromFamilyIndex) {
+    Invoke-Uv @('--index-url', $FamilyIndex, '--pre', "rocm[$RocmExtra]")
+} else {
+    Invoke-Uv @('--extra-index-url', "$RocmIndex/v4/whl/", '--pre', "rocm[$RocmExtra]")
+}
 
 # -------------------------------------------------- 4. ROCm torch/torchaudio
 # torch and torchaudio must be the same full build string. uv resolves them
@@ -139,8 +172,8 @@ Invoke-Uv @('--extra-index-url', "$RocmIndex/v4/whl/", '--pre', "rocm[libraries,
 # the rocm 7.10 SDK it pairs with and the whole v4 index
 # ("Unknown rocm library 'hipsparselt'" at import time). Pinning one verified
 # build for both avoids the whole class of problem.
-Step "ROCm PyTorch $TorchVersion (matched torch + torchaudio)"
-Invoke-Uv @('--index-url', "$RocmIndex/v2/gfx120X-all/", "torch==$TorchVersion", "torchaudio==$TorchVersion")
+Step "ROCm PyTorch $TorchVersion (matched torch + torchaudio $TorchAudioVersion)"
+Invoke-Uv @('--index-url', $FamilyIndex, "torch==$TorchVersion", "torchaudio==$TorchAudioVersion")
 
 if (-not $SkipRequirements) {
     # ---------------------------------------------------- 5. the rest of the pins

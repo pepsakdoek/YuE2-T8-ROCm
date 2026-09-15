@@ -16,6 +16,10 @@ settings.json
 yue2_home.txt
 node.zip
 vendor/seed-vc/campplus_cn_common.bin
+# Upstream YuE checkout, used by scripts/rocm/run_example_song.py for
+# examples/song.json. It is a git repository of its own, so it is cloned into
+# place rather than committed (see README).
+YuE/
 *.pyc
 __pycache__/
 .pytest_cache/
